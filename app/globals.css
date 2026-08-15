@@ -1,26 +1,170 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   Sistema de diseño · Hola Amigo
+   Tono de marca: moderno, directo, confiable.
+
+   La paleta es papel y tinta con dos señales:
+     · verde profundo = dinero, confianza, lo que se recupera
+     · naranja quemado = la fuga, lo que se está cayendo
+
+   Regla: el naranja SOLO se usa para cifras de fuga. Si se usa para otra cosa
+   pierde su significado y la sección de fugas deja de golpear.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+@theme {
+  --color-paper: #fbfaf8;
+  --color-paper-raised: #ffffff;
+  --color-paper-sunken: #f4f2ee;
+
+  --color-ink: #12100e;
+  --color-ink-soft: #45403a;
+  --color-ink-faint: #7d766c;
+
+  --color-line: #e7e3dc;
+  --color-line-strong: #d6d0c6;
+
+  --color-money: #14503f;
+  --color-money-soft: #e6f0ec;
+  --color-money-bright: #1c7a5e;
+
+  --color-leak: #b1451a;
+  --color-leak-soft: #fbeee6;
+
+  --color-signal: #1a1a1a;
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  --radius-card: 14px;
+}
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  color-scheme: light;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Números tabulares en todo lo que sea plata: evita que las cifras "bailen"
+   al recalcularse cuando el cliente arrastra un supuesto. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+}
+
+/* ── Revelado por secciones del diagnóstico (§4.3) ──────────────────────────
+   Se revela por secciones, no todo de golpe. Con animation-timeline nativo:
+   sin JS, sin librería, y respeta prefers-reduced-motion. */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.reveal {
+  animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-timeline: view();
+  animation-range: entry 0% entry 55%;
+}
+
+/* Fallback para navegadores sin animation-timeline: aparecen escalonadas. */
+@supports not (animation-timeline: view()) {
+  .reveal {
+    animation: rise 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation-delay: calc(var(--i, 0) * 90ms);
+  }
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+.pulse-dot {
+  animation: pulse-soft 1.6s ease-in-out infinite;
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.slide-in {
+  animation: slide-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal,
+  .slide-in,
+  .pulse-dot {
+    animation: none !important;
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Barra de progreso del quiz */
+.progress-track {
+  background: var(--color-paper-sunken);
+}
+.progress-fill {
+  background: var(--color-ink);
+  transition: width 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Foco visible y consistente: accesibilidad sin excepciones. */
+:focus-visible {
+  outline: 2px solid var(--color-money-bright);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Controles de rango para editar supuestos */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--color-line-strong);
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  cursor: grab;
+  border: 3px solid var(--color-paper-raised);
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.2);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--color-ink);
+  cursor: grab;
+  border: 3px solid var(--color-paper-raised);
 }

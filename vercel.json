@@ -1,0 +1,32 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "nextjs",
+  "regions": ["iad1"],
+  "crons": [
+    {
+      "path": "/api/cron/sweep",
+      "schedule": "*/2 * * * *"
+    }
+  ],
+  "headers": [
+    {
+      "source": "/api/research/stream/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-transform" },
+        { "key": "X-Accel-Buffering", "value": "no" }
+      ]
+    },
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
+        {
+          "key": "Permissions-Policy",
+          "value": "camera=(), microphone=(), geolocation=(), interest-cohort=()"
+        }
+      ]
+    }
+  ]
+}

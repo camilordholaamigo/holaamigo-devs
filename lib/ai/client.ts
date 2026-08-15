@@ -1,0 +1,331 @@
+import OpenAI from 'openai';
+import { zodTextFormat } from 'openai/helpers/zod';
+import type { z } from 'zod';
+import { env } from '@/lib/env';
+import { db } from '@/lib/supabase/admin';
+import { MODEL_ROUTES, estimateCost, type StepName } from '@/config/models';
+
+/**
+ * Envoltura única sobre la Responses API de OpenAI.
+ *
+ * Todo lo que un agente le pide al modelo pasa por aquí, y aquí pasan cuatro
+ * cosas que no queremos repetir en cada llamada:
+ *
+ *  1. Salida estructurada validada con Zod (PRD §8.4). Nunca se renderiza
+ *     JSON sin validar.
+ *  2. Cadena de fallback de modelos. Un nombre de modelo retirado degrada
+ *     calidad, no disponibilidad.
+ *  3. Reintento ante salida inválida; a la tercera se degrada a un esquema
+ *     mínimo si el llamador lo ofrece.
+ *  4. Registro en `agent_runs` con modelo, tokens, costo y duración. Sin esto
+ *     no podemos responder "¿cuánto nos costó este diagnóstico?".
+ *
+ * Ver docs/wiki/03-agentes.md
+ */
+
+let client: OpenAI | null = null;
+
+function openai(): OpenAI {
+  if (!client) {
+    client = new OpenAI({ apiKey: env.openaiApiKey, maxRetries: 2, timeout: 150_000 });
+  }
+  return client;
+}
+
+export interface RunOptions<T> {
+  step: StepName;
+  /** Nombre del esquema. Va al API y a los logs. snake_case. */
+  schemaName: string;
+  schema: z.ZodType<T>;
+  /** Instrucciones de sistema: quién es el agente y qué no puede hacer. */
+  system: string;
+  /** El contenido concreto de esta corrida. */
+  input: string;
+  /** Contexto de trazabilidad. */
+  organizationId?: string | null;
+  agentId?: string | null;
+  role?: 'president' | 'cmo' | 'sales' | null;
+  trigger?: string;
+  /**
+   * Fallback si el esquema principal falla dos veces. Puede tener otra forma:
+   * `inflate` la lleva de vuelta a `T` para que el llamador no bifurque.
+   */
+  degradeTo?: {
+    schema: z.ZodType<unknown>;
+    schemaName: string;
+    inflate: (value: never) => T;
+  } | null;
+  /** Sobrescribe el uso de web search del paso. */
+  webSearch?: boolean;
+}
+
+export interface RunResult<T> {
+  data: T;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  durationMs: number;
+  degraded: boolean;
+  /** URLs citadas por web_search, si el paso las usó. */
+  citations: { url: string; title: string }[];
+}
+
+class ModelUnavailableError extends Error {}
+
+/** ¿El error dice "ese modelo no existe / no tienes acceso"? */
+function isModelUnavailable(err: unknown): boolean {
+  const anyErr = err as { status?: number; code?: string; message?: string };
+  if (anyErr?.code === 'model_not_found') return true;
+  if (anyErr?.status === 404) return true;
+  const msg = (anyErr?.message ?? '').toLowerCase();
+  return msg.includes('does not exist') || msg.includes('do not have access');
+}
+
+function isToolUnsupported(err: unknown): boolean {
+  const msg = ((err as { message?: string })?.message ?? '').toLowerCase();
+  return msg.includes('web_search') && (msg.includes('unsupported') || msg.includes('invalid'));
+}
+
+interface RawCall {
+  text: string;
+  tokensIn: number;
+  tokensOut: number;
+  citations: { url: string; title: string }[];
+}
+
+async function callOnce(
+  model: string,
+  opts: RunOptions<unknown>,
+  schema: z.ZodType<unknown>,
+  schemaName: string,
+  useWebSearch: boolean,
+  webSearchType: 'web_search' | 'web_search_preview',
+): Promise<RawCall> {
+  const route = MODEL_ROUTES[opts.step];
+
+  const body: Record<string, unknown> = {
+    model,
+    instructions: opts.system,
+    input: opts.input,
+    max_output_tokens: route.maxOutputTokens,
+    text: { format: zodTextFormat(schema, schemaName) },
+  };
+
+  if (route.temperature !== null) body.temperature = route.temperature;
+  if (useWebSearch) body.tools = [{ type: webSearchType }];
+
+  // El body se arma dinámicamente (temperature y tools son condicionales), así
+  // que lo tipamos en el borde en vez de pelear con la unión del SDK.
+  const create = openai().responses.create.bind(openai().responses) as (
+    b: Record<string, unknown>,
+  ) => Promise<unknown>;
+  const response = await create(body);
+
+  const res = response as {
+    output_text?: string;
+    usage?: { input_tokens?: number; output_tokens?: number };
+    output?: Array<{
+      type: string;
+      content?: Array<{
+        type: string;
+        text?: string;
+        annotations?: Array<{ type: string; url?: string; title?: string }>;
+      }>;
+    }>;
+  };
+
+  const citations: { url: string; title: string }[] = [];
+  for (const item of res.output ?? []) {
+    for (const part of item.content ?? []) {
+      for (const ann of part.annotations ?? []) {
+        if (ann.type === 'url_citation' && ann.url) {
+          citations.push({ url: ann.url, title: ann.title ?? ann.url });
+        }
+      }
+    }
+  }
+
+  return {
+    text: res.output_text ?? '',
+    tokensIn: res.usage?.input_tokens ?? 0,
+    tokensOut: res.usage?.output_tokens ?? 0,
+    citations,
+  };
+}
+
+export async function runStructured<T>(opts: RunOptions<T>): Promise<RunResult<T>> {
+  const route = MODEL_ROUTES[opts.step];
+  const useWebSearch = opts.webSearch ?? route.webSearch;
+  const startedAt = Date.now();
+
+  let tokensIn = 0;
+  let tokensOut = 0;
+  let lastError: unknown = null;
+  let webSearchType: 'web_search' | 'web_search_preview' = 'web_search';
+
+  // Dos intentos con el esquema pedido; si el llamador ofrece uno degradado,
+  // un tercero con ese. Cada intento puede rotar de modelo por indisponibilidad.
+  const identity = (value: unknown) => value as T;
+  const attempts: Array<{
+    schema: z.ZodType<unknown>;
+    name: string;
+    degraded: boolean;
+    inflate: (value: unknown) => T;
+  }> = [
+    { schema: opts.schema, name: opts.schemaName, degraded: false, inflate: identity },
+    { schema: opts.schema, name: opts.schemaName, degraded: false, inflate: identity },
+  ];
+  if (opts.degradeTo) {
+    const { schema, schemaName, inflate } = opts.degradeTo;
+    attempts.push({
+      schema,
+      name: schemaName,
+      degraded: true,
+      inflate: (value: unknown) => inflate(value as never),
+    });
+  }
+
+  for (const attempt of attempts) {
+    for (const model of route.models) {
+      try {
+        let raw: RawCall;
+        try {
+          raw = await callOnce(
+            model,
+            opts as unknown as RunOptions<unknown>,
+            attempt.schema,
+            attempt.name,
+            useWebSearch,
+            webSearchType,
+          );
+        } catch (err) {
+          if (useWebSearch && webSearchType === 'web_search' && isToolUnsupported(err)) {
+            // Cuenta antigua: el tool se llama distinto. Reintentamos una vez.
+            webSearchType = 'web_search_preview';
+            raw = await callOnce(
+              model,
+              opts as unknown as RunOptions<unknown>,
+              attempt.schema,
+              attempt.name,
+              useWebSearch,
+              webSearchType,
+            );
+          } else if (isModelUnavailable(err)) {
+            throw new ModelUnavailableError(String((err as Error)?.message ?? err));
+          } else {
+            throw err;
+          }
+        }
+
+        tokensIn += raw.tokensIn;
+        tokensOut += raw.tokensOut;
+
+        const parsed = attempt.schema.safeParse(JSON.parse(raw.text || '{}'));
+        if (!parsed.success) {
+          lastError = new Error(
+            `salida inválida contra ${attempt.name}: ${parsed.error.issues
+              .slice(0, 3)
+              .map((i) => `${i.path.join('.')}: ${i.message}`)
+              .join(' · ')}`,
+          );
+          break; // mismo modelo, siguiente intento del bucle externo
+        }
+
+        const value = attempt.inflate(parsed.data);
+        const durationMs = Date.now() - startedAt;
+        const costUsd = estimateCost(model, tokensIn, tokensOut);
+
+        await logRun(opts, {
+          model,
+          tokensIn,
+          tokensOut,
+          costUsd,
+          durationMs,
+          status: attempt.degraded ? 'degraded' : 'ok',
+          error: attempt.degraded ? `degradado a ${attempt.name}` : null,
+          output: value,
+        });
+
+        return {
+          data: value,
+          model,
+          tokensIn,
+          tokensOut,
+          costUsd,
+          durationMs,
+          degraded: attempt.degraded,
+          citations: raw.citations,
+        };
+      } catch (err) {
+        lastError = err;
+        if (err instanceof ModelUnavailableError) continue; // probar el siguiente modelo
+        break; // error real: no rotar modelo, reintentar el paso
+      }
+    }
+  }
+
+  const durationMs = Date.now() - startedAt;
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  await logRun(opts, {
+    model: route.models[0],
+    tokensIn,
+    tokensOut,
+    costUsd: estimateCost(route.models[0], tokensIn, tokensOut),
+    durationMs,
+    status: 'failed',
+    error: message,
+    output: null,
+  });
+
+  throw new Error(`[ai:${opts.step}] ${message}`);
+}
+
+type AnyRunOptions = Omit<RunOptions<unknown>, 'schema' | 'degradeTo'>;
+
+async function logRun(
+  opts: AnyRunOptions,
+  result: {
+    model: string;
+    tokensIn: number;
+    tokensOut: number;
+    costUsd: number;
+    durationMs: number;
+    status: 'ok' | 'failed' | 'degraded' | 'escalated';
+    error: string | null;
+    output: unknown;
+  },
+): Promise<void> {
+  try {
+    await db()
+      .from('agent_runs')
+      .insert({
+        agent_id: opts.agentId ?? null,
+        organization_id: opts.organizationId ?? null,
+        role: opts.role ?? null,
+        step: opts.step,
+        trigger: opts.trigger ?? 'intake',
+        input: { system: opts.system.slice(0, 2000), input: opts.input.slice(0, 8000) },
+        output: result.output ?? null,
+        model: result.model,
+        tokens_in: result.tokensIn,
+        tokens_out: result.tokensOut,
+        cost_usd: result.costUsd,
+        duration_ms: result.durationMs,
+        status: result.status,
+        error: result.error,
+      });
+  } catch (err) {
+    // El log nunca debe tumbar la corrida real.
+    console.error('[ai] no se pudo registrar agent_run', err);
+  }
+}
+
+/** Gasto acumulado de IA de una organización, para el tope por sesión (§10). */
+export async function spentUsd(organizationId: string): Promise<number> {
+  const { data } = await db()
+    .from('agent_runs')
+    .select('cost_usd')
+    .eq('organization_id', organizationId);
+  return (data ?? []).reduce((sum, row) => sum + Number(row.cost_usd ?? 0), 0);
+}
