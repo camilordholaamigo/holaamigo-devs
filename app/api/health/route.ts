@@ -167,6 +167,48 @@ export async function GET(request: Request) {
       fix: v4.length === 0 ? undefined : 'correr 0006_sustrato.sql',
     });
 
+    // ── v5: la correa (P2) ────────────────────────────────────────────────
+    //
+    // El chequeo que importa no es que las tablas existan: es que el motor diga
+    // que NO. Se le pregunta por `partnership.commit`, que tiene techo de
+    // plataforma L0, con una organización inexistente. Si contesta cualquier
+    // cosa que no sea `blocked`, algo está mal en el catálogo o en la función y
+    // hay que enterarse acá y no cuando un agente firme algo.
+    const v5: string[] = [];
+
+    for (const table of ['capabilities', 'capability_grants', 'guard_events', 'approval_kinds']) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v5.push(table);
+    }
+
+    const { count: capCount } = await db()
+      .from('capabilities')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active');
+    if ((capCount ?? 0) < 20) v5.push(`catálogo incompleto (${capCount ?? 0} capacidades)`);
+
+    const { data: veredicto, error: guardError } = await db().rpc('autorizar', {
+      p_org: '00000000-0000-0000-0000-000000000000',
+      p_capability: 'partnership.commit',
+      p_payload: {},
+      p_agent: null,
+      p_registrar: false,
+    });
+    if (guardError) v5.push('rpc:autorizar');
+    else if ((veredicto as { verdict?: string } | null)?.verdict !== 'blocked') {
+      v5.push('el motor NO bloquea partnership.commit');
+    }
+
+    checks.push({
+      name: 'db:v5',
+      ok: v5.length === 0,
+      detail:
+        v5.length === 0
+          ? `correa activa: ${capCount} capacidades y el motor bloquea lo prohibido`
+          : `problemas: ${v5.join(', ')}`,
+      fix: v5.length === 0 ? undefined : 'correr 0007_gobierno.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()

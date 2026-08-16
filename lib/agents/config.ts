@@ -14,18 +14,32 @@ import type { AgentRole } from '@/lib/agents/contracts';
  * preferencia. Y una prohibición que se puede apagar en un formulario no es una
  * prohibición: es una sugerencia con mala prensa.
  *
- * `autonomy` es la única palanca que cambia de verdad el comportamiento:
- *   · propose            → propone todo, no ejecuta nada. Por defecto.
- *   · approve_each       → puede agendar solo; el resto lo aprueba el humano.
- *   · auto_within_limits → responde y agenda solo, dentro de los topes.
+ * `autonomy` es el dial GRUESO, y desde P2 es una de las tres entradas del
+ * techo del cliente en la escalera de capacidades:
  *
- * Ni en `auto_within_limits` el agente lanza una campaña, cambia un precio o
- * escribe a alguien sin base legal. Eso es contrato, no autonomía.
+ *   · propose            → L1. Propone todo, no ejecuta nada. Por defecto.
+ *   · approve_each       → L3. Ejecuta ítem por ítem, cada uno aprobado antes.
+ *   · auto_within_limits → L4. Ejecuta dentro del sobre declarado y reporta.
+ *   · sampled            → L5. Sin sobre, auditado por muestreo.
  *
- * Ver docs/wiki/13-feed-y-autonomia.md
+ * **El dial grueso gobierna lo que sale del edificio.** Investigar, puntuar y
+ * escribir en objetos propios (el Brief, el CRM, un borrador) no lo toca: no
+ * afecta a ningún tercero y se deshace editando. Por eso la CMO en `propose`
+ * sigue pudiendo vigilar competidores.
+ *
+ * `sampled` NO está en el formulario del cliente (el `zod` de
+ * `/api/agents/config` acepta tres valores). Lo abre un operador nuestro a mano,
+ * cliente por cliente: nada se automatiza antes de haberse hecho tres veces a
+ * mano (§13.3). Cuando lo hayamos hecho tres veces, entra al formulario.
+ *
+ * Ni en `sampled` el agente firma nada, publica a nombre de la marca o cotiza un
+ * precio: eso lo frena el techo de PLATAFORMA de cada capacidad, que no depende
+ * de este dial ni de ningún plan. Ver `supabase/migrations/0007_gobierno.sql`.
+ *
+ * Ver docs/wiki/13-feed-y-autonomia.md y docs/wiki/16-gobierno-capacidades-y-sobres.md
  */
 
-export type Autonomy = 'propose' | 'approve_each' | 'auto_within_limits';
+export type Autonomy = 'propose' | 'approve_each' | 'auto_within_limits' | 'sampled';
 
 export interface PresidentConfig {
   /** Hora local a la que publica el resumen y las propuestas. */
@@ -79,10 +93,12 @@ export const DEFAULT_CONFIG: Record<AgentRole, AgentConfig> = {
 };
 
 export const DEFAULT_AUTONOMY: Record<AgentRole, Autonomy> = {
-  // El President y el CMO nunca ejecutan, así que su autonomía es siempre
-  // `propose` (§13.1). Están acá por completitud del tipo, no porque se puedan
-  // cambiar.
+  // El President nunca ejecuta: es el que razona sobre dinero (§13.1). Su valor
+  // es fijo, no un default.
   president: 'propose',
+  // La CMO arranca en `propose` por defecto, pero desde P2 el cliente puede
+  // subirla. Lo que cambió no es el principio: es que ahora hay una escalera
+  // por capacidad en vez de un interruptor para todo el agente.
   cmo: 'propose',
   // SALES también arranca en `propose`, igual que el default de la columna en
   // SQL. Subirlo es una decisión del cliente, tomada a propósito, después de
@@ -136,12 +152,20 @@ export function sanitize(role: AgentRole, raw: Record<string, unknown>): AgentCo
 
 export function sanitizeAutonomy(role: AgentRole, raw: unknown): Autonomy {
   const value = String(raw);
-  const valid: Autonomy[] = ['propose', 'approve_each', 'auto_within_limits'];
+  const valid: Autonomy[] = ['propose', 'approve_each', 'auto_within_limits', 'sampled'];
 
-  // El President y el CMO no ejecutan nunca (§13.1). Aunque llegue otra cosa
-  // en el formulario, se queda en `propose`.
-  if (role !== 'sales') return 'propose';
+  // El President se queda en `propose` siempre, y ahora se puede decir POR QUÉ
+  // con precisión: es el agente que razona sobre dinero, y el que razona sobre
+  // dinero no lo toca (§13.1). Su techo de plataforma en `budget.shift` es L2 —
+  // prepara la reasignación, no la ejecuta— así que su autonomía es irrelevante
+  // y dejarla fija evita la duda.
+  if (role === 'president') return 'propose';
 
+  // La CMO SÍ puede subir desde P2. Antes estaba forzada a `propose` porque la
+  // única alternativa era un dial de todo-o-nada; con la escalera, cada cosa
+  // que hace tiene su propio techo y su propio sobre. Investigar es L5 aunque
+  // esté en `propose`; contactar a un partner exige que el cliente lo abra a
+  // propósito; firmar es L0 y no se puede encender.
   return (valid as string[]).includes(value) ? (value as Autonomy) : DEFAULT_AUTONOMY[role];
 }
 

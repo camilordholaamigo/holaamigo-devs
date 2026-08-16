@@ -3,6 +3,7 @@ import { db } from '@/lib/supabase/admin';
 import { env } from '@/lib/env';
 import { executeResearch, pushProgress } from '@/lib/research/run';
 import { refreshAgentHealth } from '@/lib/agents/health';
+import { expirarAprobaciones } from '@/lib/governance/approvals';
 import { track } from '@/lib/events';
 
 /**
@@ -38,7 +39,15 @@ export async function GET(request: Request) {
     }
   }
 
-  const report = { retried: 0, abandoned_runs: 0, sessions_abandoned: 0, returns: 0, agents_checked: 0 };
+  const report = {
+    retried: 0,
+    abandoned_runs: 0,
+    sessions_abandoned: 0,
+    returns: 0,
+    agents_checked: 0,
+    aprobaciones_vencidas: 0,
+    aprobaciones_por_silencio: 0,
+  };
   const cutoff = new Date(Date.now() - STUCK_MINUTES * 60_000).toISOString();
 
   try {
@@ -79,6 +88,16 @@ export async function GET(request: Request) {
 
     // ── 2 · Salud de agentes ──────────────────────────────────────────────
     report.agents_checked = await refreshAgentHealth();
+
+    // ── 2b · Tarjetas vencidas (P2) ───────────────────────────────────────
+    //
+    // Cada 2 minutos y no una vez al día: el SLA más corto es de 4 horas
+    // (pausar una campaña que está perdiendo plata), y ese tipo se aprueba solo
+    // porque no hacerlo es el daño. Revisar una vez al día lo convertiría en un
+    // SLA de 24 h con letra chica.
+    const vencimientos = await expirarAprobaciones();
+    report.aprobaciones_vencidas = vencimientos.rechazadas;
+    report.aprobaciones_por_silencio = vencimientos.aprobadas;
 
     // ── 3 · Sesiones abandonadas y regresos ───────────────────────────────
     const abandonCutoff = new Date(Date.now() - 6 * 60 * 60_000).toISOString();

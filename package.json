@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node scripts/test-claves.mjs && node scripts/test-migraciones.mjs && node scripts/test-sustrato.mjs",
+    "test": "node scripts/test-claves.mjs && node scripts/test-migraciones.mjs && node scripts/test-sustrato.mjs && node scripts/test-gobierno.mjs",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {

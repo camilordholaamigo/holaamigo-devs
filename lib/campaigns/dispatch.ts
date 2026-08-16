@@ -9,12 +9,14 @@ import { LOW_BALANCE_CREDITS } from '@/config/credits';
 import { pushFeedItem } from '@/lib/feed/items';
 import { pauseCampaign } from '@/lib/campaigns/activate';
 import type { SequenceStep } from '@/lib/campaigns/activate';
+import { authorize } from '@/lib/governance/authorize';
+import { explicarVeredicto, type Authorization } from '@/lib/governance/types';
 
 /**
  * El despachador: lo único en todo el sistema que le manda un correo a un
  * tercero humano.
  *
- * Cinco cosas se verifican por CADA correo, aunque la campaña esté aprobada.
+ * Seis cosas se verifican por CADA correo, aunque la campaña esté aprobada.
  * Una aprobación autoriza el gasto; no autoriza saltarse ninguna de estas:
  *
  *   1. El contacto no está en la lista de supresión global.
@@ -22,6 +24,7 @@ import type { SequenceStep } from '@/lib/campaigns/activate';
  *   3. Hay una bandeja con cupo hoy (tope duro + calentamiento).
  *   4. Hay saldo de créditos.
  *   5. La campaña sigue activa.
+ *   6. La correa autoriza (P2): nivel efectivo y sobre de `outreach.send_email`.
  *
  * Ver docs/wiki/10-correo-y-bandejas.md
  */
@@ -56,6 +59,15 @@ export async function dispatchDue(now = new Date()): Promise<DispatchReport> {
   const assets = new Map<string, Asset | null>();
   const balances = new Map<string, number>();
   const mailboxes = new Map<string, Mailbox | null>();
+  const permisos = new Map<string, Authorization>();
+
+  // Cuántos correos de este lote son de cada organización. El sobre se mide en
+  // volumen, así que autorizar de a uno pediría permiso 60 veces para lo mismo
+  // y contaría 60 eventos donde hubo un solo lote.
+  const volumenPorOrg = new Map<string, number>();
+  for (const row of rows) {
+    volumenPorOrg.set(row.organization_id, (volumenPorOrg.get(row.organization_id) ?? 0) + 1);
+  }
 
   for (const message of rows) {
     const skip = (reason: string) => {
@@ -85,6 +97,35 @@ export async function dispatchDue(now = new Date()): Promise<DispatchReport> {
     }
     if (!campaign || campaign.status !== 'active') {
       await skip(`campaña en estado ${campaign?.status ?? 'inexistente'}`);
+      continue;
+    }
+
+    // ── 6 · La correa (P2) ─────────────────────────────────────────────────
+    //
+    // Sexta verificación, y la única que puede frenar correos de una campaña
+    // que ya está aprobada y activa. No es redundante con la aprobación: la
+    // aprobación autorizó la campaña una vez; el sobre limita el ritmo todos
+    // los días. Un cliente que aprobó 5.000 correos no aprobó 5.000 hoy.
+    let permiso = permisos.get(campaign.organization_id);
+    if (!permiso) {
+      permiso = await authorize({
+        organizationId: campaign.organization_id,
+        capabilityId: 'outreach.send_email',
+        title: `SALES quiere enviar ${volumenPorOrg.get(campaign.organization_id) ?? 1} correos ahora`,
+        payload: {
+          volume: volumenPorOrg.get(campaign.organization_id) ?? 1,
+          reversibility_hours: 72,
+          discloses_agent: true,
+        },
+      });
+      permisos.set(campaign.organization_id, permiso);
+    }
+    if (permiso.accion_permitida !== 'ejecutar') {
+      // `skip` y no dejarlo programado: si fuera un tope de cupo, el correo
+      // saldría mañana solo. Esto es otra cosa — un límite que el humano puso o
+      // tiene que levantar—, y un mensaje que reintenta contra una pared cada
+      // cinco minutos ensucia la auditoría con cien eventos idénticos.
+      await skip(`la correa lo frenó: ${explicarVeredicto(permiso)}`);
       continue;
     }
 

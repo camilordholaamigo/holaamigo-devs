@@ -3,6 +3,8 @@ import { PLAYBOOKS, type PlaybookKey } from '@/config/campaigns';
 import { resolveAudience } from '@/lib/campaigns/segment';
 import { capacityToday, listMailboxes } from '@/lib/email/mailboxes';
 import { measurementSchedule } from '@/lib/campaigns/math';
+import { authorize } from '@/lib/governance/authorize';
+import { explicarVeredicto } from '@/lib/governance/types';
 import { track } from '@/lib/events';
 
 /**
@@ -95,6 +97,41 @@ export async function activateCampaign(args: {
       ok: false,
       summary: `Sin audiencia: ${audience.excluded.suppressed} suprimidos, ${audience.excluded.already_scheduled} ya tienen otro envío programado.`,
       scheduled: 0,
+    };
+  }
+
+  // ── La correa (P2) ───────────────────────────────────────────────────────
+  //
+  // Va DESPUÉS de resolver la audiencia porque el sobre se mide en volumen y
+  // hasta acá no sabemos cuánta gente hay. Y va antes de escribir una sola fila
+  // en `messages`: una campaña a medio programar es peor que una no programada.
+  //
+  // `approvalId` es lo que evita la segunda tarjeta: quien llega hasta acá casi
+  // siempre viene de que un humano aprobó en el feed, y volver a preguntarle lo
+  // que acaba de responder es la forma más rápida de que deje de responder.
+  const auth = await authorize({
+    organizationId: campaign.organization_id,
+    capabilityId: 'campaign.launch',
+    approvalId: args.approvalId ?? null,
+    title: `Lanzar «${campaign.name}» a ${audience.leads.length} contactos`,
+    payload: {
+      volume: audience.leads.length,
+      // Una campaña lanzada no se deshace: los correos ya enviados no vuelven.
+      // Por eso declara su irreversibilidad en runtime en vez de heredarla del
+      // catálogo — el número real depende de cuánto dura la secuencia.
+      reversibility_hours: 72,
+      discloses_agent: true,
+      campaign_id: campaign.id,
+    },
+  });
+
+  if (auth.accion_permitida !== 'ejecutar') {
+    return {
+      ok: false,
+      scheduled: 0,
+      summary: `No se lanzó. ${explicarVeredicto(auth)}${
+        auth.approval_id ? ' Te dejamos la tarjeta en el feed.' : ''
+      }`,
     };
   }
 

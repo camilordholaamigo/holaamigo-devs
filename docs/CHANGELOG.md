@@ -8,6 +8,80 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.1.0] — 2026-08-15 · P2 · Gobierno
+
+Segunda de las seis partes. Los permisos de los agentes dejan de ser frases en
+español dentro de `agents.permissions` —que ningún código consultaba— y pasan a
+ser una máquina que se evalúa antes de cada acción.
+
+### Agregado
+
+- **La escalera de capacidades (L0–L5).** Toda capacidad de todo agente vive en
+  uno de seis niveles, de "ni la menciona" a "ejecuta y se audita por muestreo".
+  Catálogo de 25 capacidades sembrado en la migración, con el ejemplo trabajado
+  del plan completo: la CMO investiga partners en L5, redacta en L2, contacta en
+  L3–L4 con sobre, prepara un term sheet en L2 y **firma en L0, sin excepción**.
+  Ver [ADR 0018](adr/0018-la-escalera-de-capacidades.md).
+
+- **Los tres diales.** `nivel_efectivo = MIN(plataforma, cliente, plan)`. El
+  techo de plataforma no está en ninguna pantalla y no lo mueve ningún cliente;
+  el del cliente se recorta al escribir además de al evaluar.
+
+- **El sobre.** Límites declarados que hacen posible L4: monto, volumen por día
+  y por semana, contrapartes permitidas y prohibidas, compromisos prohibidos,
+  vencimiento y aviso obligatorio de que escribe un agente. Un sobre violado
+  bloquea **y** genera tarjeta; no degrada en silencio.
+
+- **`holaamigo.autorizar()` — la única puerta.** Decide y escribe la auditoría
+  (`guard_events`) en la misma transacción. Falla cerrado: capacidad desconocida
+  o motor caído dan `blocked`.
+
+- **SLA por tipo de tarjeta.** Cada `approval_kind` declara qué pasa si el humano
+  no contesta: `campaign_launch` se rechaza a las 48 h; `pause_losing_campaign`
+  se **aprueba** a las 4 h. Corre en el barrido de cada 2 minutos.
+
+- **Cableado real.** `activateCampaign()` (`campaign.launch`) y `dispatchDue()`
+  (`outreach.send_email`, sexta verificación por lote) pasan por el motor. Una
+  aprobación autoriza la campaña una vez; el sobre limita el ritmo todos los días.
+
+- **`node scripts/test-gobierno.mjs`** — 42 chequeos contra Postgres real, ya en
+  `npm test`.
+
+### Cambiado
+
+- **La CMO deja de estar forzada a `propose`.** El principio §13.1 no cambia; se
+  aplica con precisión: el President —el que razona sobre dinero— tiene
+  `budget.shift` con techo de plataforma **L2** (prepara la reasignación, no la
+  ejecuta) y su autonomía sigue fija.
+- **`agents.autonomy` gana una cuarta posición, `sampled` (L5)**, que no está en
+  el formulario del cliente: la abre un operador a mano (§13.3).
+- **`agents.autonomy` ahora gobierna solo lo que sale del edificio.** Las
+  capacidades `read` y `write` internas no lo tocan: sin eso, la CMO en
+  `propose` no podría ni mirar el sitio de un competidor.
+- **La regla de reversibilidad del plan se corrigió.** Decía "baja un nivel";
+  aplicada literal dejaba L4 inalcanzable para todo lo que sale hacia afuera y
+  el sobre no se evaluaba nunca. Quedó como **tope en L4**: una acción
+  irreversible nunca corre sin sobre. Lo encontró la prueba, está explicado en
+  el ADR.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0007_gobierno.sql`** en el SQL Editor. Es
+   idempetente y siembra el catálogo; correrla de nuevo lo actualiza.
+2. Verificar `db:v5` en `GET /api/health?key=$CRON_SECRET`. Ese chequeo no mira
+   tablas: le pregunta al motor por `partnership.commit` y exige `blocked`.
+3. **El plan de cada organización lo deriva la migración** del ciclo de vida:
+   quien esté en `activated`, `trial` o `customer` pasa a `starter` (techo L3).
+   El resto queda en `diagnostico` (L2). Sin eso, la correa frenaría en seco los
+   envíos de los clientes que ya estaban corriendo. Verificar después de correr:
+   ```sql
+   select plan, lifecycle, count(*) from holaamigo.organizations group by 1,2;
+   ```
+   Para abrir L4 —ejecutar dentro de sobres— hay que subir a `growth` a mano.
+4. Sin variables de entorno nuevas.
+
+---
+
 ## [3.0.0] — 2026-08-15 · P1 · El sustrato
 
 Primera de las seis partes del plan de la meta-organización

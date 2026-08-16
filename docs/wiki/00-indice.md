@@ -57,6 +57,16 @@ Cada lección         lib/learning/distill.ts    → 15   destilada en SQL, de n
 La siguiente corrida lib/learning/context.ts    → 15
 ```
 
+Y antes de cada acción, la correa:
+
+```
+authorize()          lib/governance/authorize.ts → 16
+   ↓ MIN(plataforma, cliente, plan) − irreversibilidad
+ejecutar · pedir · preparar · proponer · nada
+   ↓ todo queda
+guard_events                                     → 16
+```
+
 ## Índice
 
 | # | Página | De qué trata |
@@ -76,6 +86,7 @@ La siguiente corrida lib/learning/context.ts    → 15
 | 13 | [Feed y autonomía](./13-feed-y-autonomia.md) | Cómo habla el President, cuánto puede hacer solo cada agente |
 | 14 | [Observabilidad](./14-observabilidad.md) | Qué está programado, esperado vs real, salud y consumo |
 | 15 | [El sustrato](./15-sustrato-decisiones-y-aprendizaje.md) | Decisiones con predicción, trazas, lecciones destiladas y costo por decisión |
+| 16 | [Gobierno](./16-gobierno-capacidades-y-sobres.md) | La escalera L0–L5, los tres diales, los sobres y la única puerta |
 
 ## Los seis principios que gobiernan todo
 
