@@ -1,6 +1,7 @@
 import { db, unwrap } from '@/lib/supabase/admin';
 import { track } from '@/lib/events';
 import { activateCampaign, rejectCampaign } from '@/lib/campaigns/activate';
+import { aplicarAjustes, type Ajustes } from '@/lib/feed/adjust';
 
 /**
  * El feed: cómo el President le habla al humano (ADR 0012).
@@ -155,6 +156,12 @@ export interface FeedResponse {
   note?: string | null;
   /** Para los `ask`: el link del video, el texto, el dato. */
   payload?: Record<string, unknown>;
+  /**
+   * Lo que el cliente movió antes de aprobar (P3). Nunca texto libre: los
+   * valores de los controles que la propuesta declaró en
+   * `payload.ajustes_disponibles`.
+   */
+  ajustes?: Ajustes;
   by: string;
 }
 
@@ -192,7 +199,14 @@ export async function respondFeedItem(
     .from('feed_items')
     .update({
       status: response.decision,
-      response: { note: response.note ?? null, ...(response.payload ?? {}) },
+      response: {
+        note: response.note ?? null,
+        ...(response.payload ?? {}),
+        // Los ajustes se guardan SIEMPRE, incluso los que este código todavía
+        // no sabe aplicar: es lo que el cliente quiso, y perderlo es perder la
+        // señal más limpia que existe sobre qué le sobra de nuestras propuestas.
+        ...(response.ajustes ? { ajustes: response.ajustes } : {}),
+      },
       responded_by: response.by,
       responded_at: now,
     })
@@ -220,13 +234,21 @@ export async function respondFeedItem(
 
   if (item.campaign_id) {
     if (response.decision === 'approved') {
+      // Los ajustes se aplican ANTES de activar: activar y después recortar
+      // dejaría una ventana en la que la campaña completa ya está programada,
+      // y programar 20.000 filas para borrar la mitad es peor que hacerlo bien.
+      const aplicados = await aplicarAjustes({
+        campaignId: item.campaign_id,
+        ajustes: response.ajustes ?? {},
+      });
+
       const result = await activateCampaign({
         campaignId: item.campaign_id,
         approvedBy: response.by,
         approvalId: item.approval_id,
         feedItemId: item.id,
       });
-      effect = result.summary;
+      effect = [...aplicados, result.summary].join(' ');
     } else if (response.decision === 'rejected') {
       await rejectCampaign(item.campaign_id, response.note ?? 'sin nota');
       effect = 'Campaña archivada.';

@@ -168,3 +168,14 @@ input[type="range"]::-moz-range-thumb {
   cursor: grab;
   border: 3px solid var(--color-paper-raised);
 }
+
+/* ── Modo lectura: La Sala y el Capítulo (P3) ───────────────────────────────
+   El cliente no está mirando un dashboard, está leyendo cómo pensó su
+   organización. Medida de línea de libro (~68 caracteres) e interlineado
+   suelto. Si esto se ve como un panel, se usa como un panel —se escanea y se
+   cierra— y todo el valor de mostrar la deliberación se pierde. */
+.prosa {
+  max-width: 68ch;
+  text-wrap: pretty;
+  hyphens: auto;
+}

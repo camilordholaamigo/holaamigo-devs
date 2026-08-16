@@ -28,6 +28,7 @@ ejecutar → documentar. No se salta ningún paso, ni cuando hay prisa.
 | **Los errores de telemetría nunca lanzan.** `track()`, `alertSlack()` y `sendDiagnosticEmail()` capturan y registran. | `lib/events.ts` |
 | **Toda decisión de agente lleva predicción y al menos dos opciones.** Lo exige la base, no el código. Y el `outcome` solo se escribe con `holaamigo.cerrar_decision()`. | [ADR 0016](docs/adr/0016-la-microdecision-como-unidad.md) |
 | **Ninguna acción de agente se ejecuta sin pasar por `authorize()`.** Capacidad nueva = fila en el catálogo de `0007_gobierno.sql`, en el mismo PR. Lo que no está en el catálogo se bloquea. | [ADR 0018](docs/adr/0018-la-escalera-de-capacidades.md) |
+| **Ninguna recomendación se cierra sin decir qué la cambiaría, y si el humano habló hay que citarlo.** Lo exige `holaamigo.resolver_deliberacion()`. Y "Ajustar" nunca abre una caja de texto. | [ADR 0019](docs/adr/0019-la-deliberacion-como-objeto.md) |
 
 ## Los seis principios (PRD §13)
 

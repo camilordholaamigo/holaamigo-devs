@@ -1,8 +1,10 @@
 import Link from 'next/link';
 import { db } from '@/lib/supabase/admin';
 import { feedFor } from '@/lib/feed/items';
+import { priorizarFeed } from '@/lib/feed/priority';
 import { SectionTitle, Empty, Card, Stat } from '@/components/ui';
 import { FeedCard, type FeedCardItem } from '@/components/feed-card';
+import { FeedQueue, type QueueItem } from '@/components/feed-queue';
 import { formatNumber, isoInDays } from '@/lib/utils';
 
 /**
@@ -21,8 +23,9 @@ export const metadata = { title: 'Tu feed · Hola Amigo', robots: { index: false
 export default async function FeedPage({ params }: PageProps<'/consola/[orgId]'>) {
   const { orgId } = await params;
 
-  const [items, { count: sent7d }, { count: bookings }, { count: threads }] = await Promise.all([
+  const [items, cola, { count: sent7d }, { count: bookings }, { count: threads }] = await Promise.all([
     feedFor(orgId, { limit: 60 }),
+    priorizarFeed(orgId),
     db()
       .from('messages')
       .select('id', { count: 'exact', head: true })
@@ -41,29 +44,32 @@ export default async function FeedPage({ params }: PageProps<'/consola/[orgId]'>
       .eq('needs_human', true),
   ]);
 
-  const open = items.filter((item) => item.status === 'open' && item.requires !== 'nothing');
-  const rest = items.filter((item) => !open.includes(item));
+  // La cola abierta la prioriza el motor de P3 —máximo 7 en pantalla, cada una
+  // con su motivo—; el historial se pinta con las tarjetas de siempre.
+  const abiertos = new Set(cola.mostrados.map((item) => item.id));
+  const rest = items.filter((item) => !abiertos.has(item.id));
 
   return (
     <main className="mx-auto max-w-3xl space-y-12 px-6 py-12">
       <section className="space-y-6">
         <SectionTitle
           eyebrow="Tu feed"
-          title={open.length > 0 ? 'Esto necesita que decidas' : 'Nada esperando por ti'}
+          title={cola.mostrados.length > 0 ? 'Esto necesita que decidas' : 'Nada esperando por ti'}
           subtitle="Los agentes proponen y ejecutan dentro de lo aprobado. Lo que aparece acá es lo que no van a hacer sin tu permiso."
         />
 
-        {open.length === 0 ? (
+        {cola.mostrados.length === 0 ? (
           <Empty
             title="Todo al día"
             hint="Cuando el President tenga algo que proponerte o el agente necesite que entres a una conversación, aparece acá."
           />
         ) : (
-          <ul className="space-y-3">
-            {open.map((item) => (
-              <FeedCard key={item.id} orgId={orgId} item={item as unknown as FeedCardItem} />
-            ))}
-          </ul>
+          <FeedQueue
+            orgId={orgId}
+            items={cola.mostrados as unknown as QueueItem[]}
+            explicacion={cola.explicacion}
+            postergados={cola.postergados.length}
+          />
         )}
       </section>
 

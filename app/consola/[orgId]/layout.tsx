@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { db } from '@/lib/supabase/admin';
 import { balance } from '@/lib/credits';
 import { openCount } from '@/lib/feed/items';
+import { openDeliberations } from '@/lib/deliberation/room';
 import { formatNumber } from '@/lib/utils';
 
 /**
@@ -24,6 +25,10 @@ export const metadata = { robots: { index: false, follow: false } };
 
 const NAV = [
   { segment: '', label: 'Feed' },
+  // La Sala va segunda y no al final aunque sea lectura: es lo que explica lo
+  // que aparece en el feed. Un cliente que no entiende de dónde salió una
+  // propuesta no la aprueba, y la respuesta está a un clic de distancia.
+  { segment: 'sala', label: 'La Sala' },
   { segment: 'campanas', label: 'Campañas' },
   { segment: 'bandeja', label: 'Bandeja' },
   { segment: 'agenda', label: 'Agenda' },
@@ -46,9 +51,10 @@ export default async function ConsolaLayout({
 
   if (!org) notFound();
 
-  const [credits, pending, { count: waiting }] = await Promise.all([
+  const [credits, pending, discusiones, { count: waiting }] = await Promise.all([
     balance(orgId),
     openCount(orgId),
+    openDeliberations(orgId),
     db()
       .from('email_threads')
       .select('id', { count: 'exact', head: true })
@@ -71,7 +77,13 @@ export default async function ConsolaLayout({
             {NAV.map((item) => {
               const href = item.segment ? `/consola/${orgId}/${item.segment}` : `/consola/${orgId}`;
               const badge =
-                item.segment === '' ? pending : item.segment === 'bandeja' ? (waiting ?? 0) : 0;
+                item.segment === ''
+                  ? pending
+                  : item.segment === 'sala'
+                    ? discusiones
+                    : item.segment === 'bandeja'
+                      ? (waiting ?? 0)
+                      : 0;
               return (
                 <Link
                   key={item.label}

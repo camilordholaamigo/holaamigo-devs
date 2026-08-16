@@ -45,7 +45,15 @@ export async function consoleActor(organizationId: string): Promise<ConsoleActor
  *  esto, tener un link válido permitiría decidir sobre recursos ajenos pasando
  *  otro id en el cuerpo. */
 export async function belongsToOrg(
-  table: 'campaigns' | 'feed_items' | 'mailboxes' | 'assets' | 'products' | 'orders' | 'bookings',
+  table:
+    | 'campaigns'
+    | 'feed_items'
+    | 'mailboxes'
+    | 'assets'
+    | 'products'
+    | 'orders'
+    | 'bookings'
+    | 'deliberations',
   id: string,
   organizationId: string,
 ): Promise<boolean> {

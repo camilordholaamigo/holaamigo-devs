@@ -87,6 +87,7 @@ guard_events                                     → 16
 | 14 | [Observabilidad](./14-observabilidad.md) | Qué está programado, esperado vs real, salud y consumo |
 | 15 | [El sustrato](./15-sustrato-decisiones-y-aprendizaje.md) | Decisiones con predicción, trazas, lecciones destiladas y costo por decisión |
 | 16 | [Gobierno](./16-gobierno-capacidades-y-sobres.md) | La escalera L0–L5, los tres diales, los sobres y la única puerta |
+| 17 | [La Sala, el Feed y el Capítulo](./17-la-sala-el-feed-y-el-capitulo.md) | La deliberación visible, el límite de siete, el teclado y la serie diaria |
 
 ## Los seis principios que gobiernan todo
 

@@ -11,6 +11,7 @@ import { resolveAudience } from '@/lib/campaigns/segment';
 import { evaluateIteration } from '@/lib/campaigns/math';
 import { pauseCampaign } from '@/lib/campaigns/activate';
 import { pushFeedItem, openCount } from '@/lib/feed/items';
+import { ajustesDeEnvio } from '@/lib/feed/adjust';
 import { agentIdFor } from '@/lib/agents/contracts';
 
 /**
@@ -311,7 +312,19 @@ async function proposeNextSend(
     requires: 'approval',
     campaignId: campaign.id,
     severity: 'normal',
-    payload: { campaign_id: campaign.id, send_today: sendToday, credits: creditsNeeded },
+    payload: {
+      campaign_id: campaign.id,
+      send_today: sendToday,
+      credits: creditsNeeded,
+      // "Ajustar" nunca abre una caja de texto (P3): la propuesta declara qué
+      // se puede mover y la pantalla lo pinta. Cuando el cliente quiere aprobar
+      // *pero no así*, mueve un número en vez de escribir un párrafo que
+      // después alguien tiene que interpretar.
+      ajustes_disponibles: ajustesDeEnvio({
+        sendToday,
+        pasos: playbook.steps.map((step) => ({ purpose: step.purpose })),
+      }),
+    },
     dedupeKey: `send-proposal-${campaign.id}-${new Date().toISOString().slice(0, 10)}`,
     approval: {
       kind: 'campaign_launch',

@@ -10,7 +10,7 @@
 |---|---|---|
 | **P1 · Sustrato** | ✅ entregada — 2026-08-15 | [wiki/15](../wiki/15-sustrato-decisiones-y-aprendizaje.md) · [ADR 0016](../adr/0016-la-microdecision-como-unidad.md) · [ADR 0017](../adr/0017-lecciones-sin-pgvector.md) · `0006_sustrato.sql` |
 | **P2 · Gobierno** | ✅ entregada — 2026-08-15 | [wiki/16](../wiki/16-gobierno-capacidades-y-sobres.md) · [ADR 0018](../adr/0018-la-escalera-de-capacidades.md) · `0007_gobierno.sql` |
-| **P3 · La Sala** | pendiente | |
+| **P3 · La Sala** | ✅ entregada — 2026-08-16 | [wiki/17](../wiki/17-la-sala-el-feed-y-el-capitulo.md) · [ADR 0019](../adr/0019-la-deliberacion-como-objeto.md) · `0008_la_sala.sql` |
 | **P4 · Presidente/CRO** | pendiente | |
 | **P5 · CMO expandida** | pendiente | |
 | **P6 · Integraciones y CRM** | pendiente | |

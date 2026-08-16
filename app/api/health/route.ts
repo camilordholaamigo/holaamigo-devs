@@ -209,6 +209,39 @@ export async function GET(request: Request) {
       fix: v5.length === 0 ? undefined : 'correr 0007_gobierno.sql',
     });
 
+    // ── v6: La Sala (P3) ──────────────────────────────────────────────────
+    //
+    // Igual que v5, lo que se comprueba no es que las tablas existan sino que
+    // la regla se aplique: se intenta resolver una deliberación inexistente y
+    // se exige que la función responda con un error de dominio. Si contestara
+    // "ok", el campo obligatorio se podría saltar y el producto entero —una
+    // recomendación que se puede discutir— se convertiría en un oráculo.
+    const v6: string[] = [];
+
+    for (const table of ['deliberations', 'deliberation_turns', 'chapters']) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v6.push(table);
+    }
+
+    const { error: salaError } = await db().rpc('resolver_deliberacion', {
+      p_id: '00000000-0000-0000-0000-000000000000',
+      p_recommendation: {},
+      p_confidence: 0.5,
+      p_what_would_change: 'corto',
+    });
+    if (!salaError) v6.push('la función acepta resolver sin el campo obligatorio');
+    else if (!/no existe|cambiar de opinión/i.test(salaError.message)) v6.push('rpc:resolver_deliberacion');
+
+    checks.push({
+      name: 'db:v6',
+      ok: v6.length === 0,
+      detail:
+        v6.length === 0
+          ? 'la sala responde y exige decir qué cambiaría de opinión'
+          : `problemas: ${v6.join(', ')}`,
+      fix: v6.length === 0 ? undefined : 'correr 0008_la_sala.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()

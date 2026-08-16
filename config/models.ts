@@ -30,7 +30,8 @@ export type StepName =
   | 'adaptive_question'
   | 'diagnosis'
   | 'angles'
-  | 'classify';
+  | 'classify'
+  | 'chapter';
 
 export const STEP_NAMES: StepName[] = [
   'research',
@@ -39,6 +40,7 @@ export const STEP_NAMES: StepName[] = [
   'diagnosis',
   'angles',
   'classify',
+  'chapter',
 ];
 
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
@@ -85,6 +87,11 @@ export const STEP_LABELS: Record<StepName, { title: string; detail: string }> = 
   classify: {
     title: 'Clasificación de respuestas',
     detail: 'Decide qué es cada correo entrante. Volumen alto, decisión simple, el modelo más barato basta.',
+  },
+  chapter: {
+    title: 'El Capítulo de cada mañana',
+    detail:
+      'Narra en 200 palabras qué hizo la organización ayer. Es lo único que algunos clientes leen: acá subir el modelo se nota en el tono, no en los números — esos ya vienen calculados.',
   },
 };
 
@@ -162,6 +169,18 @@ export const DEFAULT_ROUTES: Record<StepName, StepConfig> = {
     temperature: 0,
     reasoningEffort: 'minimal',
     budgetTokens: 4_000,
+  },
+
+  chapter: {
+    // Corre de noche, una vez por cliente, sobre cifras ya calculadas. No hay
+    // razón para apurarlo ni para gastarle razonamiento: lo que se le pide es
+    // prosa corta y honesta, no análisis.
+    models: chain('MODEL_CHAPTER', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'),
+    maxOutputTokens: 4_000,
+    webSearch: false,
+    temperature: 0.7,
+    reasoningEffort: 'minimal',
+    budgetTokens: 12_000,
   },
 };
 

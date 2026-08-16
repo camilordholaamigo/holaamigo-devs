@@ -21,6 +21,12 @@ import { provisionAgents, agentIdFor } from '@/lib/agents/contracts';
 import { newRunId } from '@/lib/traces/record';
 import { buildLearningContext } from '@/lib/learning/context';
 import { recordDecision, imputarCostos } from '@/lib/decisions/record';
+import {
+  openDeliberation,
+  addTurn,
+  recordDissent,
+  resolveDeliberation,
+} from '@/lib/deliberation/room';
 import { refreshScore } from '@/lib/scoring';
 import { track } from '@/lib/events';
 import { sendDiagnosticEmail } from '@/lib/notify';
@@ -276,7 +282,7 @@ export async function generateDiagnostic(args: {
   // Se registra DESPUÉS de provisionar agentes para poder colgarla del
   // President; si el agente no existiera, la decisión igual se guarda (la
   // columna es nullable a propósito).
-  await recordRouteDecision({
+  const decisionId = await recordRouteDecision({
     organizationId,
     runId,
     routes,
@@ -286,6 +292,15 @@ export async function generateDiagnostic(args: {
     inverseMath,
     learning,
     researchQuality,
+  });
+
+  // ── Y la conversación que la produjo, visible (P3) ───────────────────────
+  await openRouteDeliberation({
+    organizationId,
+    routes,
+    recommended,
+    diagnosis,
+    decisionId,
   });
 
   // ── Ángulos propuestos + su aprobación ───────────────────────────────────
@@ -368,12 +383,12 @@ async function recordRouteDecision(args: {
   inverseMath: ReturnType<typeof computeInverseMath>;
   learning: { lessonIds: string[]; humanInputIds: string[] };
   researchQuality: 'full' | 'partial' | 'none';
-}): Promise<void> {
+}): Promise<string | null> {
   try {
     const presidentId = await agentIdFor(args.organizationId, 'president');
     const elegida = args.routes.find((r) => r.route === args.recommended) ?? args.routes[0];
 
-    await recordDecision({
+    return await recordDecision({
       organizationId: args.organizationId,
       agentId: presidentId,
       role: 'president',
@@ -427,6 +442,114 @@ async function recordRouteDecision(args: {
     });
   } catch (err) {
     console.error('[diagnostic] no se pudo registrar la decisión de ruta', err);
+    return null;
+  }
+}
+
+/**
+ * La misma decisión, pero como conversación que el cliente puede leer y en la
+ * que puede meterse (P3).
+ *
+ * **Los turnos no se inventan.** Cada ruta ya viene con su nota del
+ * diagnóstico: esa nota ES el argumento a favor o en contra de esa ruta, y lo
+ * único que se hace acá es atribuirla al agente cuyo dominio le corresponde —
+ * WhatsApp y correo son ejecución (SALES), marca y contenido es la CMO— y poner
+ * el rationale del President como el turno que decide.
+ *
+ * Sin esto La Sala arranca vacía y se queda vacía hasta P4, y una pantalla
+ * vacía no se puede evaluar. Con esto, el cliente puede objetar la elección de
+ * ruta el mismo día del diagnóstico, que es exactamente cuando tiene la opinión
+ * más fuerte.
+ */
+async function openRouteDeliberation(args: {
+  organizationId: string;
+  routes: ReturnType<typeof buildRoutes>;
+  recommended: string;
+  diagnosis: Diagnosis;
+  decisionId: string | null;
+}): Promise<void> {
+  try {
+    const duenoDeLaRuta: Record<string, 'sales' | 'cmo'> = {
+      whatsapp: 'sales',
+      email: 'sales',
+      brand_content: 'cmo',
+    };
+
+    const conNota = args.routes.filter(
+      (route) => (args.diagnosis.route_notes[route.route] ?? '').trim().length > 0,
+    );
+
+    // Sin notas no hay conversación que mostrar, y una deliberación con un solo
+    // turno es peor que ninguna: parece que nadie discutió nada.
+    if (conNota.length < 2) return;
+
+    const deliberationId = await openDeliberation({
+      organizationId: args.organizationId,
+      question: '¿Con cuál de las tres rutas arrancamos?',
+      openedByRole: 'president',
+      context: { segment: 'diagnostico', channel: args.recommended },
+    });
+
+    for (const route of conNota) {
+      await addTurn({
+        deliberationId,
+        speaker: duenoDeLaRuta[route.route] ?? 'president',
+        speakerType: 'agent',
+        body: `${route.label}: ${args.diagnosis.route_notes[route.route]}`,
+        stance: route.route === args.recommended ? 'propose' : 'object',
+        evidence: [
+          {
+            type: 'metric',
+            ref: `costo_mensual:${route.route}`,
+            note: `USD ${route.cost_infra_usd + route.cost_fee_usd} al mes`,
+          },
+        ],
+      });
+    }
+
+    await addTurn({
+      deliberationId,
+      speaker: 'president',
+      speakerType: 'agent',
+      body: args.diagnosis.recommended_rationale,
+      stance: 'decide',
+    });
+
+    await recordDissent(
+      deliberationId,
+      conNota
+        .filter((route) => route.route !== args.recommended)
+        .map((route) => ({
+          agent: duenoDeLaRuta[route.route] ?? 'president',
+          position: route.label.toLowerCase(),
+          argument: args.diagnosis.route_notes[route.route],
+        })),
+    );
+
+    const elegida = args.routes.find((r) => r.route === args.recommended);
+    const resuelta = await resolveDeliberation({
+      deliberationId,
+      recommendation: {
+        option: args.recommended,
+        summary: `${elegida?.label ?? args.recommended}. ${args.diagnosis.recommended_rationale}`,
+        evidence: [
+          { type: 'source', ref: 'diagnostico', note: 'research del sitio y respuestas del quiz' },
+        ],
+      },
+      confidence: 0.6,
+      whatWouldChangeMyMind: args.diagnosis.what_would_change_my_mind,
+      decisionId: args.decisionId,
+    });
+
+    // Si el modelo devolvió una frase corta o vacía, la deliberación se queda
+    // abierta en vez de resolverse con un campo de relleno. Es el resultado
+    // correcto: una recomendación sin condición de refutación no es una
+    // recomendación cerrada, y así se ve en La Sala.
+    if (!resuelta.ok) {
+      console.error(`[diagnostic] la deliberación quedó abierta: ${resuelta.error}`);
+    }
+  } catch (err) {
+    console.error('[diagnostic] no se pudo abrir la deliberación de ruta', err);
   }
 }
 

@@ -214,6 +214,20 @@ export const DiagnosisSchema = z.object({
   // §7.5 Rationale de la ruta recomendada, en una frase.
   recommended_route: z.enum(['whatsapp', 'email', 'brand_content']),
   recommended_rationale: z.string().describe('Una sola frase. Por qué esta y no otra.'),
+  /**
+   * Qué evidencia concreta haría cambiar esta recomendación (P3).
+   *
+   * Es el campo que convierte al agente en asesor y no en oráculo, y es donde
+   * el cliente sabe exactamente qué aportar para mover el rumbo. Sin él, la
+   * deliberación no se puede resolver — lo exige `holaamigo.deliberations`, no
+   * el render.
+   */
+  what_would_change_my_mind: z
+    .string()
+    .describe(
+      'Una frase concreta y verificable: qué dato, señal o hecho haría que esta ruta ' +
+        'deje de ser la correcta. Nada de "más información".',
+    ),
   route_notes: z.object({
     whatsapp: z.string(),
     email: z.string(),
@@ -274,6 +288,13 @@ export function inflateDiagnosis(min: DiagnosisMinimal): Diagnosis {
     leaks: [],
     recommended_route: min.recommended_route,
     recommended_rationale: min.recommended_rationale,
+    // En modo degradado el modelo no lo produjo, y la deliberación no se puede
+    // resolver sin esto. La frase de respaldo es genérica a propósito: dice qué
+    // observar y admite que el diagnóstico salió corto, en vez de fingir una
+    // condición precisa que nadie evaluó.
+    what_would_change_my_mind:
+      'El diagnóstico salió en modo degradado: si al conectar el canal la primera semana ' +
+      'no produce respuestas, esta ruta se revisa antes de gastar más.',
     route_notes: { whatsapp: '', email: '', brand_content: '' },
     angles: min.angles.map((a) => ({
       name: a.name,
@@ -416,3 +437,21 @@ export const InboundClassificationSchema = z.object({
   suggested_reply: z.string().nullable(),
 });
 export type InboundClassification = z.infer<typeof InboundClassificationSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EL CAPÍTULO (P3) — lo que el President escribe cada mañana
+// ═══════════════════════════════════════════════════════════════════════════
+
+export const ChapterSchema = z.object({
+  titulo: z.string().describe('Cinco palabras o menos. Es el asunto del correo.'),
+  body: z
+    .string()
+    .describe(
+      'De 150 a 250 palabras, en prosa. Qué hizo la organización ayer, sobre qué discutió, ' +
+        'qué decidió, qué cambió de opinión y qué necesita del humano hoy.',
+    ),
+  needs_from_human: z
+    .array(z.string())
+    .describe('Lo que hace falta del humano hoy, en frases cortas. Vacío si no hace falta nada.'),
+});
+export type Chapter = z.infer<typeof ChapterSchema>;

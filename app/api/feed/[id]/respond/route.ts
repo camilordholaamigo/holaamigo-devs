@@ -25,6 +25,13 @@ const Body = z.object({
   note: z.string().max(2000).nullish(),
   /** Para los `ask`: {url} de un video, {texto} de un copy, lo que sea. */
   payload: z.record(z.string(), z.unknown()).nullish(),
+  /**
+   * Lo que el cliente movió antes de aprobar (P3). Números y listas de strings,
+   * nunca texto libre: son los valores de los controles que la propuesta
+   * declaró. El tipo estrecho es la garantía de que "Ajustar" no se convierta
+   * con el tiempo en otra caja de texto con otro nombre.
+   */
+  ajustes: z.record(z.string(), z.union([z.number(), z.array(z.string())])).nullish(),
 });
 
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -32,7 +39,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   const parsed = Body.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: 'Petición inválida' }, { status: 400 });
 
-  const { organizationId, decision, note, payload } = parsed.data;
+  const { organizationId, decision, note, payload, ajustes } = parsed.data;
 
   const actor = await consoleActor(organizationId);
   if (!actor) return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
@@ -45,6 +52,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     decision,
     note: note ?? null,
     payload: payload ?? undefined,
+    ajustes: ajustes ?? undefined,
     by: actor.kind === 'admin' ? `admin:${actor.user}` : 'cliente',
   });
 

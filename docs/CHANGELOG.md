@@ -8,6 +8,76 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.2.0] — 2026-08-16 · P3 · La Sala
+
+Tercera de las seis partes, y la primera con pantallas. P1 y P2 eran invisibles;
+son lo que hace que esto tenga algo que mostrar.
+
+### Agregado
+
+- **La deliberación como objeto.** `deliberations` + `deliberation_turns`: la
+  conversación entre agentes con turnos atribuidos, postura (`propose`,
+  `object`, `decide`…) y desacuerdo explícito. Ver
+  [ADR 0019](adr/0019-la-deliberacion-como-objeto.md).
+
+- **Dos reglas que viven en la base, no en el render:**
+  1. No se resuelve sin `what_would_change_my_mind` (mínimo 20 caracteres). Ni
+     un `update` a mano puede saltárselo.
+  2. **Si el humano habló, la recomendación tiene que citarlo.** No se exige que
+     el cliente tenga razón: se exige decir qué se hizo con lo que dijo.
+
+- **La Sala** (`/consola/[orgId]/sala`): vista de lectura, columna angosta,
+  tipografía de libro. El cliente se mete en cualquier hilo; lo que escribe pesa
+  **2.0** —más que la evidencia del sistema— y **reabre la deliberación** aunque
+  estuviera resuelta. La recomendación anterior queda a la vista: es lo que el
+  agente pensaba antes de escuchar.
+
+- **El feed, rehecho.** Máximo **7 tarjetas** en pantalla, priorizadas por
+  `holaamigo.priorizar_feed()` y **cada una con el motivo de por qué está ahí**.
+  Teclado (`J`/`K`/`A`/`R`/`X`/`E`), aprobación en lote solo para severidad baja
+  y normal, y la tarjeta desaparece al instante —vuelve si el servidor falla.
+
+- **"Ajustar" nunca abre una caja de texto.** Sliders sobre números reales y
+  checkboxes sobre ítems reales, declarados por la propuesta
+  (`ajustes_disponibles`) y aplicados antes de ejecutar. El tipo de la ruta
+  (`number | string[]`, nunca `string`) impide que se convierta en otra caja de
+  texto con otro nombre.
+
+- **El Capítulo.** Job diario a las 12:00 UTC (7 a.m. Bogotá): 150–250 palabras
+  narradas, archivadas como serie. **Si el modelo escribe una cifra que no le
+  dimos, se descarta el texto** y se publica la versión determinista.
+
+- **Cada diagnóstico abre una deliberación real.** Las notas de ruta se atribuyen
+  al agente de su dominio (WhatsApp/correo → SALES, marca → CMO) y el rationale
+  del President es el turno que decide. No se inventan turnos.
+
+- **`node scripts/test-la-sala.mjs`** — 22 chequeos con los cuatro criterios de
+  aceptación de P3.
+
+### Cambiado
+
+- `DiagnosisSchema` gana **`what_would_change_my_mind`**, con ejemplos en el
+  prompt de lo que cuenta y de lo que no. En modo degradado hay una frase de
+  respaldo que admite que el diagnóstico salió corto en vez de fingir precisión.
+- Nuevo paso de modelo `chapter`, configurable desde `/admin/modelos` como los
+  demás.
+- La consola gana la pestaña **La Sala**, en segundo lugar: es lo que explica lo
+  que aparece en el feed, y un cliente que no entiende de dónde salió una
+  propuesta no la aprueba.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0008_la_sala.sql`.** Idempotente.
+2. Verificar `db:v6` en `GET /api/health?key=$CRON_SECRET`. Ese chequeo intenta
+   resolver una deliberación con una frase de cinco letras y exige que la
+   función responda con error de dominio.
+3. El cron `/api/cron/capitulo` se registra solo con el deploy. Usa el
+   `CRON_SECRET` que ya existe.
+4. Opcional: `MODEL_CHAPTER` si se quiere fijar el modelo del capítulo por
+   variable de entorno en vez de por `/admin/modelos`.
+
+---
+
 ## [3.1.0] — 2026-08-15 · P2 · Gobierno
 
 Segunda de las seis partes. Los permisos de los agentes dejan de ser frases en
