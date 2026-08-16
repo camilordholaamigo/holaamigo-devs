@@ -1,4 +1,4 @@
-import { db, unwrap } from '@/lib/supabase/admin';
+import { db, unwrap, mustWrite } from '@/lib/supabase/admin';
 import { runStructured } from '@/lib/ai/client';
 import {
   DiagnosisSchema,
@@ -60,21 +60,14 @@ export async function generateDiagnostic(args: {
   const { sessionId, organizationId } = args;
 
   // Idempotencia: si ya existe uno para esta sesión, se devuelve.
+  //
+  // `limit(1)` y no `maybeSingle()`: mientras no existió el índice único de la
+  // migración 0005 se pudieron crear diagnósticos duplicados, y `maybeSingle()`
+  // revienta con "multiple rows" ante ellos — o sea que la comprobación de
+  // idempotencia fallaba justo en las sesiones que más la necesitaban.
   if (!args.force) {
-    const { data: existing } = await db()
-      .from('diagnostics')
-      .select('id, share_token, research_quality, leaks')
-      .eq('session_id', sessionId)
-      .maybeSingle();
-    if (existing) {
-      return {
-        diagnosticId: existing.id,
-        shareToken: existing.share_token,
-        researchQuality: (existing.research_quality ?? 'partial') as 'full' | 'partial' | 'none',
-        totalLeakUsd: sumLeaks(existing.leaks),
-        degraded: false,
-      };
-    }
+    const existing = await findExisting(sessionId);
+    if (existing) return existing;
   }
 
   const org = unwrap(
@@ -172,35 +165,51 @@ export async function generateDiagnostic(args: {
   const total = totalLeakUsd(leaks);
 
   // ── Persistencia del diagnóstico ─────────────────────────────────────────
-  const diagnostic = unwrap(
-    await db()
-      .from('diagnostics')
-      .insert({
-        organization_id: organizationId,
-        session_id: sessionId,
-        identity: diagnosis.identity,
-        brand: diagnosis.brand,
-        competitors: { list: diagnosis.position.competitors, summary: diagnosis.position.summary },
-        market_position: {
-          axis_x_label: diagnosis.position.axis_x_label,
-          axis_y_label: diagnosis.position.axis_y_label,
-          you: diagnosis.position.you,
-        },
-        leaks,
-        assumptions,
-        inverse_math: inverseMath,
-        research_quality: researchQuality,
-      })
-      .select('id, share_token')
-      .single(),
-    'diagnostics.insert',
-  );
+  //
+  // Si dos llamadas concurrentes llegaron hasta acá (el usuario recargó, el
+  // navegador reintentó), el índice único de `session_id` deja pasar una sola.
+  // La que pierde relee la ganadora en vez de propagar el error: para el
+  // cliente son dos peticiones que devuelven el mismo diagnóstico, que es
+  // exactamente lo que promete la ruta.
+  const inserted = await db()
+    .from('diagnostics')
+    .insert({
+      organization_id: organizationId,
+      session_id: sessionId,
+      identity: diagnosis.identity,
+      brand: diagnosis.brand,
+      competitors: { list: diagnosis.position.competitors, summary: diagnosis.position.summary },
+      market_position: {
+        axis_x_label: diagnosis.position.axis_x_label,
+        axis_y_label: diagnosis.position.axis_y_label,
+        you: diagnosis.position.you,
+      },
+      leaks,
+      assumptions,
+      inverse_math: inverseMath,
+      research_quality: researchQuality,
+    })
+    .select('id, share_token')
+    .single();
+
+  if (inserted.error) {
+    if (isDuplicateSession(inserted.error.message)) {
+      const winner = await findExisting(sessionId);
+      if (winner) return winner;
+    }
+    throw new Error(`[db:diagnostics.insert] ${inserted.error.message}`);
+  }
+
+  const diagnostic = unwrap(inserted, 'diagnostics.insert');
 
   // ── Las 3 rutas ──────────────────────────────────────────────────────────
   const routes = buildRoutes(assumptions, inverseMath);
   const recommended = inverseMath.feasible ? diagnosis.recommended_route : 'whatsapp';
 
-  await db()
+  // Sin recomendaciones el diagnóstico se renderiza sin las tres rutas, que es
+  // la mitad del producto. Si esto falla, falla toda la generación.
+  await mustWrite(
+    db()
     .from('recommendations')
     .insert(
       routes.map((route) => ({
@@ -221,7 +230,9 @@ export async function generateDiagnostic(args: {
         projected_impact: route.projected_impact,
         is_recommended: route.route === recommended,
       })),
-    );
+    ),
+    'recommendations.insert',
+  );
 
   // ── Brief vivo: el único objeto de contexto (§13.2) ──────────────────────
   await writeBrief({ organizationId, org, answers, diagnosis, assumptions, inverseMath, leaks });
@@ -278,6 +289,32 @@ export async function generateDiagnostic(args: {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+
+async function findExisting(sessionId: string): Promise<GenerateResult | null> {
+  const { data } = await db()
+    .from('diagnostics')
+    .select('id, share_token, research_quality, leaks')
+    .eq('session_id', sessionId)
+    .order('created_at', { ascending: false })
+    .limit(1);
+
+  const existing = data?.[0];
+  if (!existing) return null;
+
+  return {
+    diagnosticId: existing.id,
+    shareToken: existing.share_token,
+    researchQuality: (existing.research_quality ?? 'partial') as 'full' | 'partial' | 'none',
+    totalLeakUsd: sumLeaks(existing.leaks),
+    degraded: false,
+  };
+}
+
+/** ¿El error es el índice único de `diagnostics(session_id)`? */
+function isDuplicateSession(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /duplicate key|23505|diagnostics_session_key/i.test(message);
+}
 
 function buildDiagnosisInput(args: {
   org: { name: string | null; domain: string; website_url: string; industry: string | null; country: string | null };
@@ -399,12 +436,17 @@ async function writeBrief(args: {
     supuestos: args.assumptions,
   };
 
-  // Un solo brief vigente por organización (índice único parcial).
-  await db()
-    .from('briefs')
-    .update({ is_current: false })
-    .eq('organization_id', args.organizationId)
-    .eq('is_current', true);
+  // Un solo brief vigente por organización (índice único parcial). El orden
+  // importa: primero se baja el vigente y después se inserta el nuevo, porque
+  // al revés el índice rechazaría la inserción.
+  await mustWrite(
+    db()
+      .from('briefs')
+      .update({ is_current: false })
+      .eq('organization_id', args.organizationId)
+      .eq('is_current', true),
+    'briefs.retire',
+  );
 
   const { data: previous } = await db()
     .from('briefs')
@@ -413,15 +455,20 @@ async function writeBrief(args: {
     .order('version', { ascending: false })
     .limit(1);
 
-  await db()
-    .from('briefs')
-    .insert({
-      organization_id: args.organizationId,
-      version: (previous?.[0]?.version ?? 0) + 1,
-      created_by: 'president',
-      content,
-      is_current: true,
-    });
+  // El Brief es el único objeto de contexto de los tres agentes (§13.2): sin
+  // él no hay de dónde razonar. Nunca puede fallar en silencio.
+  await mustWrite(
+    db()
+      .from('briefs')
+      .insert({
+        organization_id: args.organizationId,
+        version: (previous?.[0]?.version ?? 0) + 1,
+        created_by: 'president',
+        content,
+        is_current: true,
+      }),
+    'briefs.insert',
+  );
 }
 
 /**
@@ -432,53 +479,66 @@ async function writeBrief(args: {
 async function proposeAngles(organizationId: string, diagnosis: Diagnosis): Promise<void> {
   if (diagnosis.angles.length === 0) return;
 
-  const { data: inserted } = await db()
-    .from('angles')
-    .insert(
-      diagnosis.angles.slice(0, 8).map((a) => ({
-        organization_id: organizationId,
-        name: a.name,
-        hypothesis: a.hypothesis,
-        target_segment: a.target_segment,
-        variants: [{ label: 'apertura', body: a.opener }],
-        status: 'proposed',
-      })),
-    )
-    .select('id, name, hypothesis, target_segment, variants');
+  const inserted = await mustWrite(
+    db()
+      .from('angles')
+      .insert(
+        diagnosis.angles.slice(0, 8).map((a) => ({
+          organization_id: organizationId,
+          name: a.name,
+          hypothesis: a.hypothesis,
+          target_segment: a.target_segment,
+          variants: [{ label: 'apertura', body: a.opener }],
+          status: 'proposed',
+        })),
+      )
+      .select('id, name, hypothesis, target_segment, variants'),
+    'angles.insert',
+  );
 
   const cmoId = await agentIdFor(organizationId, 'cmo');
+  if ((inserted ?? []).length === 0) return;
 
-  await db()
-    .from('approvals')
-    .insert(
-      (inserted ?? []).map((angle) => ({
-        organization_id: organizationId,
-        agent_id: cmoId,
-        kind: 'angle_new',
-        title: `Ángulo propuesto: ${angle.name}`,
-        rationale: angle.hypothesis,
-        if_approved: 'SALES puede usar este ángulo en campañas del segmento asignado.',
-        if_rejected: 'El ángulo queda retirado y el CMO propone otro en su lugar.',
-        payload: { angle_id: angle.id, segment: angle.target_segment, variants: angle.variants },
-        severity: 'normal',
-      })),
-    );
+  // La cola de decisiones ES el producto (§13.6). Un ángulo que se propone sin
+  // su aprobación es un ángulo que SALES nunca va a poder usar y que nadie va a
+  // ver: peor que no proponerlo.
+  await mustWrite(
+    db()
+      .from('approvals')
+      .insert(
+        (inserted ?? []).map((angle) => ({
+          organization_id: organizationId,
+          agent_id: cmoId,
+          kind: 'angle_new',
+          title: `Ángulo propuesto: ${angle.name}`,
+          rationale: angle.hypothesis,
+          if_approved: 'SALES puede usar este ángulo en campañas del segmento asignado.',
+          if_rejected: 'El ángulo queda retirado y el CMO propone otro en su lugar.',
+          payload: { angle_id: angle.id, segment: angle.target_segment, variants: angle.variants },
+          severity: 'normal',
+        })),
+      ),
+    'approvals.angles',
+  );
 }
 
 async function raiseEscalation(organizationId: string, reasons: string[]): Promise<void> {
   const presidentId = await agentIdFor(organizationId, 'president');
 
-  await db().from('approvals').insert({
-    organization_id: organizationId,
-    agent_id: presidentId,
-    kind: 'escalation',
-    title: 'El President escaló el plan',
-    rationale: reasons.join(' · '),
-    if_approved: 'Se acepta el plan tal como está y se sigue adelante con el riesgo declarado.',
-    if_rejected: 'Hay que ajustar la meta, el plazo o el canal antes de arrancar.',
-    payload: { reasons },
-    severity: 'high',
-  });
+  await mustWrite(
+    db().from('approvals').insert({
+      organization_id: organizationId,
+      agent_id: presidentId,
+      kind: 'escalation',
+      title: 'El President escaló el plan',
+      rationale: reasons.join(' · '),
+      if_approved: 'Se acepta el plan tal como está y se sigue adelante con el riesgo declarado.',
+      if_rejected: 'Hay que ajustar la meta, el plazo o el canal antes de arrancar.',
+      payload: { reasons },
+      severity: 'high',
+    }),
+    'approvals.escalation',
+  );
 }
 
 function sumLeaks(raw: unknown): number {

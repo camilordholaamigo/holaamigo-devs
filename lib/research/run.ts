@@ -1,4 +1,4 @@
-import { db, unwrap } from '@/lib/supabase/admin';
+import { db, unwrap, mustWrite, tryWrite } from '@/lib/supabase/admin';
 import { runStructured } from '@/lib/ai/client';
 import {
   ResearchSchema,
@@ -45,10 +45,15 @@ export async function pushProgress(runId: string, step: string, detail: string):
     const log: ProgressEntry[] = Array.isArray(data?.progress_log) ? data.progress_log : [];
     log.push({ t: new Date().toISOString(), step, detail });
 
-    await db()
-      .from('research_runs')
-      .update({ progress_log: log.slice(-40) })
-      .eq('id', runId);
+    // El progreso es cosmético: si se pierde una línea, el ticker se ve más
+    // callado. No vale la pena tumbar un research de 90 segundos por eso.
+    await tryWrite(
+      db()
+        .from('research_runs')
+        .update({ progress_log: log.slice(-40) })
+        .eq('id', runId),
+      'research_runs.progress',
+    );
   } catch (err) {
     console.error('[research] no se pudo escribir progreso', err);
   }
@@ -91,28 +96,36 @@ export async function executeResearch(runId: string): Promise<void> {
     'organizations.get',
   );
 
-  await db()
-    .from('research_runs')
-    .update({
-      status: 'running',
-      started_at: new Date().toISOString(),
-      attempts: (run.attempts ?? 0) + 1,
-    })
-    .eq('id', runId);
+  // Si esta marca no queda, el barrido vuelve a tomar la misma corrida y
+  // pagamos el research dos veces. Es el estado que evita el trabajo duplicado.
+  await mustWrite(
+    db()
+      .from('research_runs')
+      .update({
+        status: 'running',
+        started_at: new Date().toISOString(),
+        attempts: (run.attempts ?? 0) + 1,
+      })
+      .eq('id', runId),
+    'research_runs.running',
+  );
 
   // ── Cache por dominio ─────────────────────────────────────────────────────
   const cached = await findCachedRun(org.id, runId);
   if (cached) {
     await pushProgress(runId, 'cache', `Ya conocíamos ${org.domain} — recuperando el análisis`);
-    await db()
-      .from('research_runs')
-      .update({
-        status: cached.status,
-        reused_from_run_id: cached.id,
-        finished_at: new Date().toISOString(),
-        cost_usd: 0,
-      })
-      .eq('id', runId);
+    await tryWrite(
+      db()
+        .from('research_runs')
+        .update({
+          status: cached.status,
+          reused_from_run_id: cached.id,
+          finished_at: new Date().toISOString(),
+          cost_usd: 0,
+        })
+        .eq('id', runId),
+      'research_runs.cached',
+    );
     await track('research_reused', {
       organizationId: org.id,
       sessionId: run.session_id,
@@ -186,17 +199,25 @@ export async function executeResearch(runId: string): Promise<void> {
         : `Análisis listo · ${allSources.length} fuentes`,
     );
 
-    await db()
-      .from('research_runs')
-      .update({
-        status,
-        model: result.model,
-        tokens_in: result.tokensIn,
-        tokens_out: result.tokensOut,
-        cost_usd: result.costUsd,
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', runId);
+    // `tryWrite` en los cambios de estado terminales: si esta escritura falla,
+    // la corrida se queda en `running` y el barrido de /api/cron/sweep la
+    // recoge. Lanzar acá sería peor — mandaría al catch de abajo una corrida
+    // que en realidad salió bien, y marcaría como fallido un research que ya
+    // tiene sus hallazgos guardados.
+    await tryWrite(
+      db()
+        .from('research_runs')
+        .update({
+          status,
+          model: result.model,
+          tokens_in: result.tokensIn,
+          tokens_out: result.tokensOut,
+          cost_usd: result.costUsd,
+          finished_at: new Date().toISOString(),
+        })
+        .eq('id', runId),
+      'research_runs.finished',
+    );
 
     await track(status === 'done' ? 'research_done' : 'research_partial', {
       organizationId: org.id,
@@ -227,14 +248,17 @@ export async function executeResearch(runId: string): Promise<void> {
         : 'Reintentando el análisis',
     );
 
-    await db()
-      .from('research_runs')
-      .update({
-        status: terminal ? (crawl.ok ? 'partial' : 'failed') : 'queued',
-        error: message.slice(0, 900),
-        finished_at: terminal ? new Date().toISOString() : null,
-      })
-      .eq('id', runId);
+    await tryWrite(
+      db()
+        .from('research_runs')
+        .update({
+          status: terminal ? (crawl.ok ? 'partial' : 'failed') : 'queued',
+          error: message.slice(0, 900),
+          finished_at: terminal ? new Date().toISOString() : null,
+        })
+        .eq('id', runId),
+      'research_runs.failed',
+    );
 
     await track(terminal ? 'research_failed' : 'research_partial', {
       organizationId: org.id,
@@ -261,7 +285,10 @@ async function persistFindings(
   crawl: Awaited<ReturnType<typeof crawlSite>>,
   sources: { url: string; title: string; retrieved_at: string }[],
 ): Promise<void> {
-  await db().from('research_findings').delete().eq('research_run_id', runId);
+  await mustWrite(
+    db().from('research_findings').delete().eq('research_run_id', runId),
+    'research_findings.clear',
+  );
 
   const rows = [
     { section: 'offer', payload: f.offer, confidence: clamp01(f.offer.confidence) },
@@ -292,14 +319,20 @@ async function persistFindings(
     },
   ];
 
-  await db().from('research_findings').insert(
-    rows.map((r) => ({
-      research_run_id: runId,
-      section: r.section,
-      payload: r.payload,
-      confidence: r.confidence,
-      sources,
-    })),
+  // Los hallazgos SON el research. Si esto no se guarda, el diagnóstico se
+  // arma a ciegas y el cliente lee un texto genérico después de haber esperado
+  // minuto y medio. Se prefiere marcar la corrida como fallida.
+  await mustWrite(
+    db().from('research_findings').insert(
+      rows.map((r) => ({
+        research_run_id: runId,
+        section: r.section,
+        payload: r.payload,
+        confidence: r.confidence,
+        sources,
+      })),
+    ),
+    'research_findings.insert',
   );
 }
 
@@ -321,7 +354,8 @@ async function persistCrawlOnly(
     .limit(1);
   if (existing?.length) return;
 
-  await db()
+  await mustWrite(
+    db()
     .from('research_findings')
     .insert([
       {
@@ -343,7 +377,9 @@ async function persistCrawlOnly(
         confidence: 0.9,
         sources,
       },
-    ]);
+    ]),
+    'research_findings.crawl_only',
+  );
 }
 
 /** Lo que aprendimos del sitio se guarda en la organización: país, industria,
@@ -359,7 +395,12 @@ async function enrichOrganization(organizationId: string, f: ResearchOutput): Pr
   }
   if (Object.keys(patch).length === 0) return;
 
-  await db().from('organizations').update(patch).eq('id', organizationId);
+  // Acá se decide la moneda del diagnóstico. Si no queda, el cliente colombiano
+  // lee sus cifras en dólares — se ve mal, pero no rompe nada.
+  await tryWrite(
+    db().from('organizations').update(patch).eq('id', organizationId),
+    'organizations.enrich',
+  );
 }
 
 function clamp01(value: number | null | undefined): number {

@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node scripts/test-claves.mjs && node scripts/test-migraciones.mjs",
+    "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.4",
@@ -24,6 +26,7 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.5",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/papaparse": "^5.5.2",

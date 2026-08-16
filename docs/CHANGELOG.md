@@ -8,6 +8,253 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [2.1.0] — 2026-08-15
+
+Barrido de bugs antes de traer clientes. El quiz volvió a funcionar, los fallos
+de escritura dejaron de ser invisibles, y el modelo de IA se cambia desde el
+admin sin desplegar.
+
+### Corregido
+
+- **El quiz no guardaba ninguna respuesta y no avanzaba.** `quiz_responses`
+  tenía dos índices únicos **parciales** y el código hacía `upsert` con
+  `onConflict` sobre esas columnas. Postgres no puede usar un índice parcial
+  como árbitro de un `ON CONFLICT` que no repite su predicado: cada respuesta
+  fallaba con `42P10`. Ahora hay una columna generada `answer_key =
+  coalesce(question_id, slot)` y **un** índice único plano.
+  Ver [ADR 0015](adr/0015-claves-de-upsert-planas.md).
+
+- **Ese fallo era invisible, y esa era la mitad del bug.** `supabase-js` no
+  lanza: devuelve `{ error }`. Sesenta escrituras del código hacían
+  `await db().from(x).insert(...)` sin mirarlo, así que un error de Postgres no
+  aparecía ni en la pantalla ni en los logs — la ruta devolvía 200 con la misma
+  pregunta. Se agregaron `mustWrite()` (lanza, para lo que no se puede perder) y
+  `tryWrite()` (registra, para telemetría y contadores) en
+  `lib/supabase/admin.ts`, y se aplicaron a todo el camino del producto.
+  `/api/quiz/answer` además verifica que la pregunta haya cambiado y devuelve
+  500 si no.
+
+- **Crear un producto o una bandeja de correo fallaba siempre**, por la variante
+  de índices de **expresión** del mismo problema (`lower(sku)`,
+  `lower(address)`). Índices planos y normalización a minúsculas en el código.
+
+- **`temperature` mataba cuatro de los seis pasos de IA.** Los modelos de la
+  familia gpt-5 rechazan el parámetro con un 400 que no es `model_not_found`, así
+  que la cadena de fallback no lo cubría: el paso moría entero. Las preguntas
+  adaptativas del quiz caían siempre al respaldo, en silencio. Ahora
+  `paramsFor()` decide los parámetros por familia de modelo, y un 400 de
+  parámetro no soportado reintenta sin él.
+
+- **Respuestas vacías por presupuesto de tokens.** En modelos de razonamiento
+  `max_output_tokens` incluye el razonamiento invisible; con los topes viejos
+  (500 en `classify`, 1200 en `adaptive_question`) el modelo gastaba el
+  presupuesto pensando y devolvía texto vacío, que se veía igual que un fallo de
+  esquema. Topes subidos, `reasoning.effort` explícito por paso, y un mensaje de
+  error que dice qué subir y dónde.
+
+- **La generación del diagnóstico podía duplicarse.** La idempotencia por sesión
+  vivía solo en un `select` previo: dos llamadas concurrentes creaban dos
+  diagnósticos, cobraban dos corridas del modelo, y a partir de ahí el
+  `maybeSingle()` de la comprobación fallaba para siempre con *multiple rows*.
+  Ahora hay índice único en `diagnostics(session_id)`, la inserción perdedora
+  relee la ganadora, y el cliente tiene una guarda con `useRef` contra el doble
+  disparo del efecto.
+
+- **La barra de progreso del quiz retrocedía** al pasar de las fijas a las
+  adaptativas. El total se estima con el piso (4 adaptativas) y el cliente nunca
+  deja bajar el porcentaje.
+
+- **El error de ensamblaje quedaba oculto** detrás de la pantalla "estamos
+  armando tu diagnóstico", para siempre. Ahora se muestra con un botón de
+  reintentar.
+
+### Añadido
+
+- **`/admin/modelos`** — qué modelo corre cada paso, editable sin desplegar.
+  Precedencia: tabla `settings` → variable de entorno → default del código.
+  Toma efecto en menos de 30 segundos. La pantalla muestra al lado el costo real
+  de cada paso en los últimos 30 días.
+  Ver [ADR 0014](adr/0014-configuracion-en-caliente.md).
+- **Tabla `holaamigo.settings`** y `lib/settings.ts`, con caché de 30 s.
+- **`npm test`** — pruebas contra Postgres de verdad, sin Docker ni servidor
+  (PGlite, WASM). `scripts/test-claves.mjs` **reproduce** el bug con el esquema
+  viejo y prueba que el nuevo funciona; `scripts/test-migraciones.mjs` corre las
+  cinco migraciones en orden **dos veces** y verifica que el upsert real del
+  quiz funcione contra el esquema real. Ninguna prueba con la base simulada
+  habría visto este bug: hacía falta un planificador de Postgres diciendo que
+  no.
+- **`npm run smoke`** — prueba de humo del flujo completo contra una URL real:
+  intake → quiz → diagnóstico → panel. Falla si una pregunta del quiz se repite,
+  que es exactamente el bug de esta versión.
+- **`db:v3` en `GET /api/health`** — verifica que la columna `answer_key` y la
+  tabla `settings` existan. La pregunta "¿corrió la migración?" se responde con
+  un curl.
+
+### Cambiado
+
+- **Todos los pasos de IA arrancan en la familia mini/nano.** Decisión temporal
+  y deliberada mientras se prueba el flujo: un diagnóstico completo cuesta
+  centavos en vez de un dólar largo. Es seguro porque ninguna cifra que el
+  cliente lee sale del modelo (ADR 0007). Para volver a calidad de producción no
+  hay que desplegar: `/admin/modelos`, subir `diagnosis` y `research`.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0005_claves_y_settings.sql`** en el SQL Editor
+   de Supabase. Sin esto el quiz sigue sin guardar. Es idempotente.
+2. Verificar: `curl https://TU_DOMINIO/api/health` debe devolver `ok: true` con
+   `db:v3` en verde.
+3. Correr la prueba de humo: `node scripts/smoke.mjs https://TU_DOMINIO`.
+4. Opcional: en `/admin/modelos`, subir `diagnosis` a `gpt-5` si se quiere
+   calidad de producción. No requiere despliegue.
+
+No hay variables de entorno nuevas.
+
+---
+
+## [2.0.1] — 2026-08-15
+
+Arreglo del arranque en producción y del diagnóstico a ciegas que lo hizo caro.
+
+### Corregido
+
+- **`Invalid schema: holaamigo` en cada consulta.** No era un bug del código: el
+  schema dedicado de ADR 0001 no estaba en la lista de *Exposed schemas* de la
+  API de Supabase, y PostgREST rechazaba todo con `PGRST106`. En la app se veía
+  como *"Algo se rompió de nuestro lado"* en el primer clic de la landing.
+  El paso nunca estuvo documentado — ese era el bug real.
+
+### Añadido
+
+- `supabase/migrations/0004_exponer_api.sql` — expone el schema por SQL, con
+  manejo de excepciones: si no hay permisos avisa en vez de abortar. El
+  dashboard sigue siendo la fuente duradera.
+- `GET /api/health` — responde en un solo request si hay credenciales, si la
+  base contesta, si el schema está expuesto, qué migraciones corrieron y si el
+  seed del quiz está. Devuelve 503 cuando algo bloqueante falla, así que sirve
+  de health check de monitoreo. Público ve los nombres de los chequeos;
+  los mensajes de error exigen cookie de admin o `?key=$CRON_SECRET`.
+- `explainDbError()` en `lib/supabase/admin.ts` — traduce los errores de
+  configuración de Supabase (schema no expuesto, migraciones sin correr,
+  permisos, key inválida) a instrucciones. `/api/intake` ya lo usa: el usuario
+  sigue viendo el mensaje amable y el log dice qué arreglar.
+- Runbook: sección "El primer arranque en un proyecto de Supabase nuevo" con
+  los tres pasos obligatorios y el síntoma de cada uno.
+
+### Para desplegar
+
+1. Correr `0004_exponer_api.sql`, **o** agregar `holaamigo` en Project Settings
+   → API → Exposed schemas.
+2. Verificar con `curl https://TU_DOMINIO/api/health`.
+
+---
+
+## [2.0.0] — 2026-08-15
+
+Motor de correo, activos brandeados y el feed del President. El diagnóstico
+dejó de terminar en una promesa: ahora arranca una operación.
+
+### Añadido
+
+**Base de datos** (`supabase/migrations/0003_motor_de_correo.sql`)
+- 13 tablas nuevas: `integrations`, `mailboxes`, `email_threads`,
+  `campaign_metrics`, `assets`, `asset_events`, `bookings`, `products`,
+  `orders`, `credit_ledger`, `feed_items`, `scheduled_actions`.
+- Columnas nuevas en `campaigns` (objetivo, secuencia, esperado, medición,
+  iteración), `messages` (hilo, bandeja, asunto, headers, clasificación),
+  `agents` (`config`, `autonomy`) y `leads` (`source`, `external_ref`).
+- Función `holaamigo.credit_balance(uuid)`.
+- RLS deny-by-default sobre todo lo nuevo, con el mismo bloque de `0001`.
+
+**Correo** (ADR 0008 · wiki 10)
+- SendGrid para campañas; Resend se queda para el correo del producto.
+- Bandejas múltiples por cliente con tope duro, rampa de calentamiento
+  (20/día, +30% diario) y rotación por antigüedad de uso.
+- Recepción por Inbound Parse con emparejamiento de hilos por `In-Reply-To`.
+- Webhook de eventos con verificación de firma ECDSA.
+- Link de baja propio en `/api/baja/[messageId]` → supresión global,
+  cancelación inmediata de los envíos pendientes de esa persona.
+- Pausa automática de bandeja por encima de 5% de rebotes o 0,3% de quejas.
+
+**Campañas** (wiki 11)
+- Cuatro playbooks: reactivación, rescate, conquista, lanzamiento. Selección
+  determinista de tres según diagnóstico y base.
+- Cada campaña trae segmento, proyección con rango, plan de medición con
+  fechas reales y reglas de iteración que pueden pausarla sola.
+- El CMO escribe el copy; los números los calcula `lib/campaigns/math.ts`
+  (ADR 0007). Copy de respaldo si el modelo falla.
+- Despachador con cinco verificaciones por correo, aunque esté aprobada.
+
+**Instantly** (ADR 0009)
+- Importación de listas de leads. El envío y la medición se quedan acá.
+- Exige base legal, igual que la carga de un CSV.
+
+**Activos brandeados** (ADR 0010 · wiki 12)
+- Agendador propio en `/agendar/[slug]`: cálculo de horarios puro y
+  browser-safe, zonas horarias con `Intl`, sin cuenta para quien agenda.
+- Checkout en `/pagar/[slug]` sobre el inventario del cliente, con reserva de
+  cupos y fee congelado en la orden.
+- `asset_events` registra visita y conversión: es toda la atribución.
+
+**Créditos** (ADR 0011)
+- Ledger inmutable, saldo por suma. Débito en el envío real, no en la
+  aprobación. Créditos de bienvenida al provisionar los agentes.
+
+**Feed del President** (ADR 0012 · wiki 13)
+- `feed_items` con cinco tipos. Las propuestas siguen escribiendo en
+  `approvals`: la auditoría no se parte.
+- Briefing diario: resumen, reglas de iteración, saldo, propuesta de envío y
+  petición de insumos al humano.
+- Tope de items abiertos: si hay 4 esperando, el President no propone más.
+
+**Agentes configurables** (wiki 13)
+- Tres niveles de autonomía para SALES. President y CMO fijos en `propose`.
+- El contrato sigue siendo inmutable y se muestra al lado del formulario.
+
+**Consola del cliente** (`/consola/[orgId]`)
+- Siete pantallas: feed, campañas, bandeja, agenda, activos, agentes y números.
+
+**Observabilidad** (wiki 14)
+- `scheduled_actions` con qué va a pasar, por qué y cómo se mide.
+- Esperado contra real por campaña, salud de bandejas y agentes, consumo de
+  créditos y ventas atribuidas.
+
+### Pendiente y explícito
+
+- **Pagos en placeholder** (ADR 0013): la orden se registra, se reserva el
+  cupo y se calcula el fee, pero el cobro es manual.
+- **Acceso a la consola por link** (`lib/auth/console.ts`): quien tiene la URL
+  de `/consola/[orgId]` puede decidir por esa organización, igual que el panel
+  de v1. **Hay que cambiarlo por auth real antes del primer cliente que no sea
+  fundador.**
+- Las credenciales de integraciones se guardan en claro en `integrations`. El
+  schema es deny-by-default y solo las lee código de servidor; pasan a Vault
+  cuando haya más de un operador con acceso a la base.
+
+### Para desplegar
+
+1. **Migración:** correr `supabase/migrations/0003_motor_de_correo.sql` en el
+   SQL Editor del proyecto. Es idempotente.
+2. **Variables nuevas** (ver `.env.example`):
+   - `SENDGRID_API_KEY` — sin ella el motor corre y registra en el log.
+   - `SENDGRID_WEBHOOK_PUBLIC_KEY` — **obligatoria en producción**: sin ella el
+     webhook de eventos rechaza todo.
+   - `SENDGRID_INBOUND_SECRET` — va en la URL de la Inbound Parse.
+   - `EMAIL_INBOUND_DOMAIN` — subdominio apuntado a `mx.sendgrid.net`.
+   - `INSTANTLY_API_KEY` — opcional; cada cliente puede conectar la suya.
+3. **SendGrid:**
+   - Autenticar el dominio de envío (SPF, DKIM, DMARC).
+   - Inbound Parse del subdominio →
+     `https://TU_DOMINIO/api/webhooks/sendgrid/inbound?k=SENDGRID_INBOUND_SECRET`
+   - Signed Event Webhook →
+     `https://TU_DOMINIO/api/webhooks/sendgrid/events`, activar la firma y
+     copiar la clave pública.
+4. **Cron:** `vercel.json` agrega `/api/cron/dispatch` cada 5 minutos. Usa el
+   mismo `CRON_SECRET`.
+5. Verificar con `npx tsc --noEmit` y `npm run build`.
+
+---
+
 ## [1.0.0] — 2026-08-15
 
 MVP completo del Motor de Ventas v1. Todo el PRD §2 "Dentro de v1", construido

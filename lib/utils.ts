@@ -80,6 +80,19 @@ export function isoInDays(days: number, from = new Date()): string {
   return d.toISOString();
 }
 
+/**
+ * Corte temporal para consultas "de los últimos N días".
+ *
+ * Existe además de `isoInDays(-n)` por una razón de herramientas: la regla de
+ * pureza del compilador de React marca cualquier `Date.now()` escrito dentro
+ * del cuerpo de un componente, incluidos los Server Components asíncronos donde
+ * es perfectamente correcto. Encapsularlo acá deja el llamador limpio y —más
+ * importante— pone la intención en el nombre.
+ */
+export function isoDaysAgo(days: number): string {
+  return isoInDays(-Math.abs(days));
+}
+
 /** Primera IP real detrás del proxy de Vercel. */
 export function clientIp(headers: Headers): string | null {
   const forwarded = headers.get('x-forwarded-for');

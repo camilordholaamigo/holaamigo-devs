@@ -50,6 +50,29 @@ export const env = {
   get slackWebhookUrl() {
     return optional('SLACK_WEBHOOK_URL');
   },
+  /** Envío de campañas. Separado de Resend a propósito: ver ADR 0008. */
+  get sendgridApiKey() {
+    return optional('SENDGRID_API_KEY');
+  },
+  /** Clave pública del Signed Event Webhook. Sin ella no verificamos firmas. */
+  get sendgridWebhookPublicKey() {
+    return optional('SENDGRID_WEBHOOK_PUBLIC_KEY');
+  },
+  /** Secreto en la URL de la Inbound Parse: es la única autenticación que
+   *  ese webhook admite. Sin él, cualquiera inyecta respuestas falsas. */
+  get sendgridInboundSecret() {
+    return optional('SENDGRID_INBOUND_SECRET');
+  },
+  /** Dominio donde apunta la Inbound Parse de SendGrid. Las respuestas llegan
+   *  a un alias nuestro, nunca al buzón real del cliente: si no, la respuesta
+   *  se queda en su Gmail y el agente no se entera. */
+  get inboundDomain() {
+    return optional('EMAIL_INBOUND_DOMAIN', 'parse.holaamigo.co');
+  },
+  /** Instantly: fuente de listas y leads, no motor de envío. Ver ADR 0009. */
+  get instantlyApiKey() {
+    return optional('INSTANTLY_API_KEY');
+  },
   get calcomUrl() {
     return optional('NEXT_PUBLIC_CALCOM_URL');
   },

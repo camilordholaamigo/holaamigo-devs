@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ResearchTicker } from '@/components/research-ticker';
 import type { QuizQuestion } from '@/lib/quiz/bank';
@@ -42,8 +42,39 @@ export function QuizFlow({
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /**
+   * Guarda contra el doble disparo del efecto.
+   *
+   * `setGenerating(true)` no se ve dentro del mismo ciclo, así que en el modo
+   * estricto de React —y en cualquier re-render que llegue antes del repintado—
+   * el efecto de abajo llamaba dos veces a `/api/diagnostic/generate`. Con la
+   * idempotencia respaldada en la base eso ya no duplica diagnósticos, pero sí
+   * dispara dos corridas del modelo y cobra dos veces. Un ref se lee y se
+   * escribe en el mismo tick; el estado no.
+   */
+  const generateStarted = useRef(false);
+
+  /**
+   * El progreso nunca retrocede.
+   *
+   * El total del quiz crece cuando aparecen las adaptativas (11 → 12), así que
+   * el porcentaje crudo puede bajar de una pregunta a la siguiente. Se guarda
+   * el máximo en estado y no en un ref: un ref escrito durante el render es
+   * justo el patrón que rompe cuando React reintenta un render.
+   */
+  const [progress, setProgress] = useState(0);
+
   // Borrador local de la respuesta en curso (texto, número, multi).
   const [draft, setDraft] = useState<string | string[]>('');
+
+  /** Punto único donde entra una respuesta del servidor. */
+  const applyState = useCallback((data: NextResponse) => {
+    setState(data);
+    if (data.runId) setRunId(data.runId);
+    setDraft(data.question?.input_type === 'multi' ? [] : '');
+    const pct = Math.min(100, Math.round((data.answeredCount / Math.max(1, data.total)) * 100));
+    setProgress((previous) => Math.max(previous, pct));
+  }, []);
 
   const load = useCallback(async () => {
     try {
@@ -57,19 +88,26 @@ export function QuizFlow({
         setError(data.error ?? 'No pudimos cargar el quiz.');
         return;
       }
-      setState(data);
-      if (data.runId) setRunId(data.runId);
-      setDraft(data.question?.input_type === 'multi' ? [] : '');
+      applyState(data);
     } catch {
       setError('Se cayó la conexión. Recarga la página.');
     }
-  }, [sessionId]);
+  }, [sessionId, applyState]);
 
+  // Carga inicial. La regla del compilador desaconseja `setState` dentro de un
+  // efecto, y tiene razón como norma general — pero esto es exactamente el caso
+  // que la excepción cubre: sincronizar con un sistema externo (el servidor) al
+  // montar. La alternativa, pasar el estado inicial desde el Server Component,
+  // haría que la generación de las preguntas adaptativas —una llamada de IA—
+  // bloquee el primer byte de la página.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
 
   const generate = useCallback(async () => {
+    if (generateStarted.current) return;
+    generateStarted.current = true;
     setGenerating(true);
     try {
       const response = await fetch('/api/diagnostic/generate', {
@@ -81,18 +119,26 @@ export function QuizFlow({
       if (!response.ok) {
         setError(data.error ?? 'No pudimos armar el diagnóstico.');
         setGenerating(false);
+        // Se libera la guarda para que el botón de reintentar sirva de verdad.
+        generateStarted.current = false;
         return;
       }
       router.push(data.next);
     } catch {
       setError('Se cayó la conexión mientras armábamos tu diagnóstico.');
       setGenerating(false);
+      generateStarted.current = false;
     }
   }, [sessionId, router]);
 
+  // El quiz terminó → se arma el diagnóstico. Va en un efecto y no solo en el
+  // manejador de `submit` porque también hay que cubrir al que recarga la
+  // página con el quiz ya completo. La guarda de `generateStarted` es la que
+  // impide que ambos caminos disparen dos corridas del modelo.
   useEffect(() => {
-    if (state?.done && !generating) void generate();
-  }, [state?.done, generating, generate]);
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (state?.done) void generate();
+  }, [state?.done, generate]);
 
   async function submit(answer: unknown) {
     if (!state?.question || busy) return;
@@ -112,8 +158,7 @@ export function QuizFlow({
         setBusy(false);
         return;
       }
-      setState(data);
-      setDraft(data.question?.input_type === 'multi' ? [] : '');
+      applyState(data);
     } catch {
       setError('No pudimos guardar tu respuesta. Revisa tu conexión.');
     } finally {
@@ -121,10 +166,23 @@ export function QuizFlow({
     }
   }
 
-  if (error && !state) {
+  // El error del ensamblaje tiene que ganarle a la pantalla de carga: si no,
+  // el cliente se queda mirando "estamos armando tu diagnóstico" para siempre
+  // mientras el servidor ya contestó que no pudo.
+  if (error && (!state || (state.done && !generating))) {
     return (
-      <div className="mx-auto max-w-xl px-6 py-24 text-center">
+      <div className="mx-auto max-w-xl space-y-5 px-6 py-24 text-center">
         <p className="text-[15px] text-leak">{error}</p>
+        <button
+          type="button"
+          onClick={() => {
+            setError(null);
+            void (state?.done ? generate() : load());
+          }}
+          className="rounded-xl bg-ink px-5 py-3 text-[14px] font-semibold text-paper transition hover:bg-money-bright"
+        >
+          Intentar de nuevo
+        </button>
       </div>
     );
   }
@@ -142,7 +200,6 @@ export function QuizFlow({
   }
 
   const question = state.question;
-  const progress = Math.min(100, Math.round((state.answeredCount / Math.max(1, state.total)) * 100));
 
   return (
     <div className="mx-auto w-full max-w-xl px-6 py-10 sm:py-14">

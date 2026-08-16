@@ -363,12 +363,16 @@ export async function persistBatch(args: {
   mapping: ColumnMapping['mapping'];
   preview: IngestPreview;
   leads: NormalizedLead[];
+  /** De dónde salió el lote. `upload` es el drag & drop; `instantly` viene de
+   *  la integración (ADR 0009). Cambia la trazabilidad, no el procesamiento:
+   *  la deduplicación y la supresión son las mismas para todos. */
+  source?: 'upload' | 'apollo' | 'apify' | 'instantly' | 'manual' | 'inbound';
 }): Promise<{ batchId: string; inserted: number; suppressed: number }> {
   const { data: batch, error } = await db()
     .from('lead_batches')
     .insert({
       organization_id: args.organizationId,
-      source: 'upload',
+      source: args.source ?? 'upload',
       filename: args.filename,
       raw_count: args.preview.raw_count,
       valid_count: args.preview.valid_count,

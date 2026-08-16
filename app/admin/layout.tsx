@@ -21,6 +21,7 @@ const NAV = [
   { href: '/admin/approvals', label: 'Cola' },
   { href: '/admin/agents', label: 'Agentes' },
   { href: '/admin/runs', label: 'Corridas' },
+  { href: '/admin/modelos', label: 'Modelos' },
 ];
 
 export default async function AdminLayout({ children }: LayoutProps<'/admin'>) {

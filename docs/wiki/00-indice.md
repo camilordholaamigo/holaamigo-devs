@@ -29,12 +29,28 @@ Cargar leads       lib/leads/ingest.ts → 07
 Panel + Admin      app/panel · app/admin → 08
 ```
 
+## Y después del diagnóstico: el motor de correo (v2)
+
+```
+3 campañas         lib/campaigns/plan.ts → 11
+   ↓ el cliente aprueba en la consola
+Envío              lib/campaigns/dispatch.ts · lib/email/* → 10
+   ↓
+Respuestas         lib/email/inbound.ts → 10
+   ↓
+Cita o venta       lib/scheduling · lib/commerce → 12
+   ↓
+El President habla lib/feed/president.ts → 13
+   ↓
+Los números        lib/observability/summary.ts → 14
+```
+
 ## Índice
 
 | # | Página | De qué trata |
 |---|---|---|
 | 01 | [Arquitectura](./01-arquitectura.md) | El stack, por qué cada pieza, cómo corre el trabajo en background |
-| 02 | [Modelo de datos](./02-modelo-de-datos.md) | Las 20 tablas, las relaciones, los índices que importan |
+| 02 | [Modelo de datos](./02-modelo-de-datos.md) | Las tablas, las relaciones, los índices que importan y las claves de upsert |
 | 03 | [Los agentes](./03-agentes.md) | Los tres contratos, el ruteo de modelos, el cliente de IA |
 | 04 | [Motor de research](./04-motor-de-research.md) | El crawler, el progreso en vivo, la caché, los modos de falla |
 | 05 | [Quiz adaptativo](./05-quiz-adaptativo.md) | Fijas, adaptadas, cierre, y qué pasa si el modelo falla |
@@ -42,6 +58,11 @@ Panel + Admin      app/panel · app/admin → 08
 | 07 | [Pipeline de leads](./07-leads-pipeline.md) | Parseo, mapeo, normalización, dedup, base legal |
 | 08 | [Scoring PLG](./08-scoring-plg.md) | FIT, INTENT, bandas, cuándo entra un humano |
 | 09 | [Operación y runbook](./09-operacion-y-runbook.md) | Desplegar, variables, qué hacer cuando algo se rompe |
+| 10 | [Correo y bandejas](./10-correo-y-bandejas.md) | SendGrid, calentamiento, topes, envío y recepción, la baja |
+| 11 | [Campañas](./11-campanas.md) | Playbooks, segmentos, proyección, medición e iteración |
+| 12 | [Activos: agenda y checkout](./12-activos-agenda-y-checkout.md) | El mini-Calendly, el botón de pago, inventario y atribución |
+| 13 | [Feed y autonomía](./13-feed-y-autonomia.md) | Cómo habla el President, cuánto puede hacer solo cada agente |
+| 14 | [Observabilidad](./14-observabilidad.md) | Qué está programado, esperado vs real, salud y consumo |
 
 ## Los seis principios que gobiernan todo
 

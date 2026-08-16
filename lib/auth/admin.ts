@@ -14,8 +14,15 @@ import { env } from '@/lib/env';
  * cambia por Supabase Auth en una tarde cuando haya usuarios reales.
  *
  * Lo que SÍ es innegociable y ya está: la cookie va firmada (no es un flag
- * booleano), la comparación de contraseña es en tiempo constante, y el middleware
- * bloquea /admin y /api/admin completos.
+ * booleano), la comparación de contraseña es en tiempo constante, y toda la
+ * superficie del admin está cerrada — `app/admin/layout.tsx` verifica en cada
+ * request y redirige a /admin-login, y cada ruta bajo /api/admin llama a
+ * `currentAdmin()` antes de hacer nada.
+ *
+ * No hay middleware, y es a propósito: la puerta está en el layout y en cada
+ * ruta, que es donde se puede leer sin salir del archivo que protege. Un
+ * middleware con la lista de rutas en otro lado es una lista que se
+ * desactualiza el día que alguien agrega un endpoint.
  *
  * Ver docs/adr/0005-auth-admin.md
  */

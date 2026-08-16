@@ -90,9 +90,32 @@ Si el usuario cierra la pestaña en la pregunta 4, tenemos las tres primeras y
 un lead recuperable. Eso vale más que la elegancia de un submit único. Es §4.2
 del PRD y no es negociable.
 
-El `upsert` usa índices únicos parciales distintos según el tipo de pregunta
-(`session_id, question_id` para fijas; `session_id, slot` para generadas), así
-que volver atrás y cambiar una respuesta actualiza en vez de duplicar.
+### La clave
+
+Una sola: `(session_id, answer_key)`, donde `answer_key` es una columna generada
+en Postgres como `coalesce(question_id, slot)`. Cubre los dos tipos de pregunta
+—fija con `question_id`, adaptativa con `slot`— con un único índice único plano.
+Volver atrás y cambiar una respuesta actualiza en vez de duplicar.
+
+**Esto antes eran dos índices únicos parciales, y por eso el quiz estuvo muerto
+una semana.** Postgres no puede usar un índice parcial como árbitro de un
+`ON CONFLICT` que no repite su predicado, así que cada respuesta fallaba con
+`42P10`, y como nadie miraba el error de `supabase-js` la ruta devolvía 200 con
+la misma pregunta. La pantalla se quedaba quieta, sin mensaje y sin log. Ver
+[ADR 0015](../adr/0015-claves-de-upsert-planas.md).
+
+Dos cosas quedaron para que no vuelva a pasar en silencio:
+
+- `saveAnswer()` usa `mustWrite()`: un error de escritura lanza y la ruta
+  devuelve 500.
+- `/api/quiz/answer` compara la pregunta que devuelve contra la que acaba de
+  responderse. Si es la misma, es que no se guardó, y lo dice.
+
+### Respuestas saltadas
+
+`answer` es `jsonb not null`. Una pregunta saltada se guarda como cadena vacía,
+no como `NULL`: ese NOT NULL es lo que hace distinguible "respondió y saltó" de
+"todavía no respondió". Sin fila, el quiz nunca avanzaría de esa pregunta.
 
 ## Al terminar
 

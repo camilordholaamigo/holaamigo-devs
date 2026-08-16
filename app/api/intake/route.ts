@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server';
 import { z } from 'zod';
-import { db } from '@/lib/supabase/admin';
+import { db, explainDbError } from '@/lib/supabase/admin';
 import { normalizeUrl, domainOf, isValidEmail, clientIp } from '@/lib/utils';
 import { checkRateLimit, LIMITS } from '@/lib/ratelimit';
 import { executeResearch } from '@/lib/research/run';
@@ -182,7 +182,10 @@ export async function POST(request: Request) {
       next: `/quiz/${session.id}`,
     });
   } catch (err) {
-    console.error('[intake] fallo', err);
+    // `explainDbError` convierte los errores de configuración de Supabase en
+    // instrucciones. El usuario sigue viendo el mensaje amable; quien lee los
+    // logs ve qué hay que arreglar. Ver /api/health para el diagnóstico completo.
+    console.error('[intake] fallo:', explainDbError(err));
     return NextResponse.json(
       { error: 'Algo se rompió de nuestro lado. Intenta de nuevo en un minuto.' },
       { status: 500 },

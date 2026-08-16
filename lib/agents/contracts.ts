@@ -1,5 +1,6 @@
-import { db } from '@/lib/supabase/admin';
+import { db, mustWrite } from '@/lib/supabase/admin';
 import { track } from '@/lib/events';
+import { grantWelcomeCredits } from '@/lib/credits';
 
 /**
  * Los tres contratos (PRD §3).
@@ -145,7 +146,11 @@ export async function provisionAgents(
     dailyMessageCap: args.dailyMessageCap ?? 500,
   });
 
-  await db()
+  // Sin los tres agentes el cliente llega al panel y ve "Todavía no hay
+  // agentes instanciados" después de haber respondido doce preguntas. Es el
+  // final del embudo: acá no se acepta un fallo silencioso.
+  await mustWrite(
+    db()
     .from('agents')
     .upsert(
       contracts.map((c) => ({
@@ -161,7 +166,18 @@ export async function provisionAgents(
         escalation_rules: c.escalation_rules,
       })),
       { onConflict: 'organization_id,role' },
-    );
+    ),
+    'agents.upsert',
+  );
+
+  // Créditos de bienvenida (ADR 0011). Es idempotente: si ya se otorgaron, no
+  // se repiten. Van acá y no en el intake porque provisionar los agentes es el
+  // momento en el que la organización pasa a poder gastar.
+  //
+  // Ojo: el upsert de arriba NO toca `config` ni `autonomy`. Re-provisionar no
+  // puede pisar lo que el cliente configuró — el contrato se actualiza, sus
+  // preferencias no.
+  await grantWelcomeCredits(organizationId);
 
   await track('agents_provisioned', {
     organizationId,

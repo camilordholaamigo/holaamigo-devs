@@ -1,4 +1,4 @@
-import { db } from '@/lib/supabase/admin';
+import { db, tryWrite } from '@/lib/supabase/admin';
 
 /**
  * Eventos PLG. Alimentan el intent score (§9.1) y el timeline de la ficha 360.
@@ -39,16 +39,18 @@ export async function track(
     props?: Record<string, unknown>;
   } = {},
 ): Promise<void> {
-  try {
-    await db().from('plg_events').insert({
+  // `tryWrite` y no un try/catch alrededor del await: `supabase-js` no lanza,
+  // devuelve `{ error }`. El catch de antes nunca se ejecutaba y los eventos
+  // perdidos no dejaban ni una línea en el log.
+  await tryWrite(
+    db().from('plg_events').insert({
       organization_id: args.organizationId ?? null,
       session_id: args.sessionId ?? null,
       event,
       props: args.props ?? {},
-    });
-  } catch (err) {
-    console.error(`[plg] no se pudo registrar ${event}`, err);
-  }
+    }),
+    `plg.${event}`,
+  );
 }
 
 export async function hasEvent(organizationId: string, event: PlgEvent): Promise<boolean> {

@@ -89,14 +89,24 @@ export default async function PanelPage({ params }: PageProps<'/panel/[orgId]'>)
               {org.name ?? org.domain}
             </h1>
           </div>
-          {diagnostic.data ? (
+          <div className="flex flex-wrap gap-3">
+            {diagnostic.data ? (
+              <Link
+                href={`/diagnostico/${diagnostic.data.share_token}`}
+                className="rounded-xl border border-line-strong px-4 py-2.5 text-[13.5px] font-semibold text-ink transition hover:border-ink"
+              >
+                Ver mi diagnóstico
+              </Link>
+            ) : null}
+            {/* La consola es donde se opera: campañas, bandeja, agenda. Este
+                panel se queda como la foto del estado inicial. */}
             <Link
-              href={`/diagnostico/${diagnostic.data.share_token}`}
-              className="rounded-xl border border-line-strong px-4 py-2.5 text-[13.5px] font-semibold text-ink transition hover:border-ink"
+              href={`/consola/${orgId}`}
+              className="rounded-xl bg-ink px-4 py-2.5 text-[13.5px] font-semibold text-paper transition hover:bg-money-bright"
             >
-              Ver mi diagnóstico
+              Abrir mi consola
             </Link>
-          ) : null}
+          </div>
         </div>
       </header>
 

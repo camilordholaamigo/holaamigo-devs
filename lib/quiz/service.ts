@@ -1,4 +1,4 @@
-import { db, unwrap } from '@/lib/supabase/admin';
+import { db, unwrap, mustWrite, tryWrite } from '@/lib/supabase/admin';
 import { runStructured } from '@/lib/ai/client';
 import { AdaptiveQuestionsSchema } from '@/lib/ai/schemas';
 import { ADAPTIVE_QUESTION_SYSTEM } from '@/config/prompts';
@@ -26,6 +26,8 @@ import { track } from '@/lib/events';
  */
 
 const MAX_ADAPTIVE = 5;
+/** Piso de adaptativas. `ensureAdaptive` completa con el respaldo hasta acá. */
+const MIN_ADAPTIVE = 4;
 /** Cuánto esperamos al research antes de generar las adaptativas sin él. */
 const RESEARCH_WAIT_MS = 12_000;
 
@@ -120,20 +122,38 @@ export async function saveAnswer(
     slot: string | null;
     answer: unknown;
   } = isGenerated
-    ? { session_id: sessionId, question_id: null, slot: key, answer }
-    : { session_id: sessionId, question_id: key, slot: null, answer };
+    ? { session_id: sessionId, question_id: null, slot: key, answer: normalizeAnswer(answer) }
+    : { session_id: sessionId, question_id: key, slot: null, answer: normalizeAnswer(answer) };
 
-  await db()
-    .from('quiz_responses')
-    .upsert(row, {
-      onConflict: isGenerated ? 'session_id,slot' : 'session_id,question_id',
-    });
+  // Clave única: `answer_key` es una columna generada = coalesce(question_id,
+  // slot), con un índice único PLANO encima. Antes había dos índices parciales
+  // y dos `onConflict` distintos, y ninguno de los dos funcionaba: Postgres no
+  // puede usar un índice parcial como árbitro de un ON CONFLICT que no repite
+  // su predicado, así que cada respuesta fallaba con 42P10.
+  // Ver supabase/migrations/0005 y docs/adr/0015.
+  await mustWrite(
+    db().from('quiz_responses').upsert(row, { onConflict: 'session_id,answer_key' }),
+    'quiz_responses.upsert',
+  );
 
-  await db()
-    .from('intake_sessions')
-    .update({ status: 'quiz', last_seen_at: new Date().toISOString() })
-    .eq('id', sessionId)
-    .in('status', ['started', 'quiz']);
+  await mustWrite(
+    db()
+      .from('intake_sessions')
+      .update({ status: 'quiz', last_seen_at: new Date().toISOString() })
+      .eq('id', sessionId)
+      .in('status', ['started', 'quiz']),
+    'intake_sessions.touch',
+  );
+}
+
+/**
+ * `answer` es `jsonb not null`: guardar SQL NULL falla, y ese NOT NULL es
+ * deliberado — es lo que hace distinguibles "respondió y saltó" (cadena vacía)
+ * de "no ha respondido" (no hay fila). Una pregunta saltada tiene que contar
+ * como respondida o el quiz nunca avanza de ella.
+ */
+function normalizeAnswer(answer: unknown): unknown {
+  return answer === undefined || answer === null ? '' : answer;
 }
 
 /** Preguntas adaptativas ya generadas para esta sesión. */
@@ -243,9 +263,9 @@ async function ensureAdaptive(
   }
 
   // Si quedaron muy pocas, completamos con el respaldo.
-  if (questions.length < 4) {
+  if (questions.length < MIN_ADAPTIVE) {
     for (const fallback of FALLBACK_ADAPTIVE) {
-      if (questions.length >= 4) break;
+      if (questions.length >= MIN_ADAPTIVE) break;
       if (questions.some((q) => q.slot === fallback.slot)) continue;
       questions.push(fallback);
     }
@@ -255,20 +275,26 @@ async function ensureAdaptive(
     .sort((a, b) => a.sort_order - b.sort_order)
     .map((q, index) => ({ ...q, sort_order: 100 + index * 10 }));
 
-  await db()
-    .from('quiz_generated')
-    .upsert(
-      questions.map((q) => ({
-        session_id: sessionId,
-        slot: q.slot!,
-        prompt: q.prompt,
-        help_text: q.help_text,
-        input_type: q.input_type,
-        options: q.options,
-        sort_order: q.sort_order,
-      })),
-      { onConflict: 'session_id,slot' },
-    );
+  // Si esta escritura se pierde, la siguiente pantalla del quiz vuelve a
+  // llamar al modelo: cobra dos veces y puede cambiar las preguntas a mitad de
+  // camino. Por eso `mustWrite` y no un await pelado.
+  await mustWrite(
+    db()
+      .from('quiz_generated')
+      .upsert(
+        questions.map((q) => ({
+          session_id: sessionId,
+          slot: q.slot!,
+          prompt: q.prompt,
+          help_text: q.help_text,
+          input_type: q.input_type,
+          options: q.options,
+          sort_order: q.sort_order,
+        })),
+        { onConflict: 'session_id,slot' },
+      ),
+    'quiz_generated.upsert',
+  );
 
   return questions;
 }
@@ -296,7 +322,11 @@ export async function getQuizState(sessionId: string): Promise<QuizState> {
       organizationId: session.organization_id,
       question: pendingFixed,
       answeredCount: Object.keys(answers).length,
-      totalEstimate: fixed.length + 4 + 1,
+      // Todavía no sabemos cuántas adaptativas van a salir. Se estima con el
+      // PISO (4, el mínimo que garantiza `ensureAdaptive`) y no con el techo,
+      // para que el total solo pueda crecer. Una barra de progreso que retrocede
+      // se lee como un error del producto.
+      totalEstimate: fixed.length + MIN_ADAPTIVE + 1,
       done: false,
       answers,
     };
@@ -342,9 +372,15 @@ export async function getQuizState(sessionId: string): Promise<QuizState> {
 }
 
 export async function markQuizCompleted(sessionId: string, organizationId: string) {
-  await db()
-    .from('intake_sessions')
-    .update({ status: 'diagnosed', completed_at: new Date().toISOString() })
-    .eq('id', sessionId);
+  // `tryWrite`: el quiz ya terminó y el diagnóstico se va a generar igual. No
+  // vale la pena devolverle un 500 al cliente por un cambio de estado que el
+  // cron de barrido puede corregir después.
+  await tryWrite(
+    db()
+      .from('intake_sessions')
+      .update({ status: 'diagnosed', completed_at: new Date().toISOString() })
+      .eq('id', sessionId),
+    'intake_sessions.completed',
+  );
   await track('quiz_completed', { organizationId, sessionId });
 }

@@ -1,7 +1,7 @@
 import Link from 'next/link';
 import { db } from '@/lib/supabase/admin';
 import { Card, SectionTitle, Stat, Empty } from '@/components/ui';
-import { formatNumber } from '@/lib/utils';
+import { formatNumber, isoDaysAgo } from '@/lib/utils';
 import { COST_ALERT_USD_PER_DIAGNOSTIC } from '@/config/models';
 
 /**
@@ -16,7 +16,7 @@ export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
 export default async function RunsPage() {
-  const since = new Date(Date.now() - 7 * 86_400_000).toISOString();
+  const since = isoDaysAgo(7);
 
   const [{ data: runs }, { count: diagnostics }] = await Promise.all([
     db()

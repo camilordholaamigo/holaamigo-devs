@@ -51,6 +51,25 @@ facturación y self-serve checkout · roles y permisos granulares por usuario ·
 agente de voz · el módulo de agencia entregado en producto (en v1 es una
 recomendación que dispara una conversación humana).
 
+> Parte de esta lista entró en **v2** (§14): el motor de campañas con
+> iteración, la atribución de la unidad económica y el checkout —este último
+> con el cobro todavía en placeholder. Los roles por usuario y el agente de voz
+> siguen fuera.
+
+### Dentro de v2 — el motor de correo
+
+| # | Módulo | Estado | Dónde |
+|---|---|---|---|
+| 10 | Bandejas múltiples con calentamiento y topes | ✅ | `wiki/10` |
+| 11 | Envío y recepción por SendGrid | ✅ | `adr/0008` |
+| 12 | Instantly como fuente de listas | ✅ | `adr/0009` |
+| 13 | Tres campañas con proyección, medición e iteración | ✅ | `wiki/11` |
+| 14 | Agendador brandeado (mini-Calendly) | ✅ | `wiki/12` |
+| 15 | Checkout e inventario | ⚠️ cobro en placeholder | `adr/0013` |
+| 16 | Créditos con ledger inmutable | ✅ | `adr/0011` |
+| 17 | Feed del President y agentes configurables | ✅ | `wiki/13` |
+| 18 | Consola del cliente y observabilidad | ✅ | `wiki/14` |
+
 ---
 
 ## 3 · Los tres agentes
@@ -285,6 +304,68 @@ Google/Microsoft, envío saliente conectado al proveedor, suite de tests.
    desconfianza.
 6. **La cola de decisiones es el producto.** Los gráficos son consulta; la cola
    es el trabajo.
+
+---
+
+## 14 · v2 — El motor de correo
+
+v1 terminaba en una promesa: tres agentes instanciados esperando permiso. v2 es
+lo que pasa cuando les das el permiso.
+
+### 14.1 El ciclo completo
+
+```
+DIAGNÓSTICO → 3 CAMPAÑAS PROPUESTAS → [el cliente aprueba]
+     ↓
+ENVÍO desde sus bandejas, con topes y calentamiento
+     ↓
+RESPUESTA → el agente clasifica → agenda, contesta o te pasa a ti
+     ↓
+CITA en el agendador · VENTA en el checkout — ambas atribuidas
+     ↓
+EL PRESIDENT PROPONE LO DE MAÑANA con los números de hoy
+```
+
+### 14.2 Qué le pedimos al humano, y qué no
+
+**Le pedimos:** aprobar o rechazar un envío, entrar a las conversaciones que el
+agente no debe manejar solo, y grabar lo que solo él puede grabar.
+
+**No le pedimos:** elegir a quién escribir, escribir el copy, decidir desde qué
+bandeja sale cada correo, acordarse de revisar una campaña, ni calcular nada.
+
+El tope de cuatro decisiones abiertas es la regla que sostiene esto. Un feed con
+doce propuestas no es más información: es el día en que alguien empieza a
+aprobar sin leer, y ahí la supervisión humana se volvió teatro.
+
+### 14.3 Los tres pilares, dentro del motor
+
+| Pilar | Cómo entra |
+|---|---|
+| **Correo** | El motor completo: outbound, inbound, secuencias, medición |
+| **WhatsApp** | Los créditos y la supresión ya son transversales; el envío conecta cuando haya el primer número provisionado |
+| **Marca y contenido** | El playbook de lanzamiento, que es el único que le pide un activo al humano y lo edita la agencia |
+
+### 14.4 Los activos como producto
+
+El agendador y el checkout no son features: son **la superficie por la que pasa
+la conversión**, y por eso el modelo de cobro por resultado es posible.
+Detalle en [ADR 0010](./adr/0010-activos-y-atribucion.md).
+
+La regla para agregar el siguiente: ¿resuelve una unidad económica concreta de
+un tipo de cliente, y la conversión pasa por nosotros?
+
+### 14.5 Métricas de v2
+
+| Métrica | Meta |
+|---|---|
+| Campañas propuestas → aprobadas | ≥60% |
+| Entregabilidad en reactivación | ≥95% |
+| Tasa de respuesta en reactivación | ≥4% |
+| Respuestas que el agente resuelve sin humano | ≥50% |
+| Citas agendadas desde el link ÷ respuestas positivas | ≥40% |
+| Decisiones abiertas en el feed, promedio | ≤3 |
+| Quejas de spam | <0,1% |
 
 ---
 

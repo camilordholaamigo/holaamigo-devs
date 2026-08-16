@@ -1,0 +1,197 @@
+import { NextResponse } from 'next/server';
+import { db, explainDbError } from '@/lib/supabase/admin';
+import { env, hasOpenAI, hasSupabase } from '@/lib/env';
+import { currentAdmin } from '@/lib/auth/admin';
+
+/**
+ * GET /api/health — ¿esto está bien configurado?
+ *
+ * Existe porque `Invalid schema: holaamigo` costó una tarde. Las tablas
+ * existían, los permisos estaban bien, la key era correcta, y todo el producto
+ * devolvía "algo se rompió de nuestro lado". Nada en la app decía qué revisar.
+ *
+ * Esta ruta contesta, en un solo GET: ¿hay credenciales? ¿la base responde?
+ * ¿el schema está expuesto? ¿corrieron las migraciones? ¿v1 y v2?
+ *
+ * Público devuelve solo `{ ok }`. El detalle exige cookie de admin o
+ * `?key=$CRON_SECRET`, porque los mensajes de error nombran infraestructura.
+ */
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+interface Check {
+  name: string;
+  ok: boolean;
+  detail: string;
+  fix?: string;
+}
+
+export async function GET(request: Request) {
+  const key = new URL(request.url).searchParams.get('key');
+  const admin = await currentAdmin();
+  const detailed = Boolean(admin) || (Boolean(env.cronSecret) && key === env.cronSecret);
+
+  const checks: Check[] = [];
+
+  // ── 1 · Credenciales ────────────────────────────────────────────────────
+  checks.push({
+    name: 'env:supabase',
+    ok: hasSupabase(),
+    detail: hasSupabase() ? 'SUPABASE_URL y SERVICE_ROLE_KEY presentes' : 'faltan variables',
+    fix: hasSupabase() ? undefined : 'vercel env add SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY',
+  });
+
+  checks.push({
+    name: 'env:openai',
+    ok: hasOpenAI(),
+    detail: hasOpenAI()
+      ? 'OPENAI_API_KEY presente'
+      : 'falta OPENAI_API_KEY — el research y el diagnóstico no van a correr',
+    fix: hasOpenAI() ? undefined : 'vercel env add OPENAI_API_KEY production',
+  });
+
+  // ── 2 · La base responde y el schema está expuesto ──────────────────────
+  // Estas dos preguntas son distintas y se confunden todo el tiempo: la base
+  // puede estar perfecta y PostgREST rechazar igual el schema (ADR 0001).
+  let schemaReachable = false;
+
+  if (hasSupabase()) {
+    try {
+      const { error } = await db().from('organizations').select('id').limit(1);
+      if (error) throw new Error(error.message);
+      schemaReachable = true;
+      checks.push({
+        name: 'db:schema',
+        ok: true,
+        detail: 'el schema holaamigo responde',
+      });
+    } catch (err) {
+      const explained = explainDbError(err);
+      checks.push({
+        name: 'db:schema',
+        ok: false,
+        detail: explained,
+        fix: /Exposed schemas/.test(explained)
+          ? 'Project Settings → API → Exposed schemas: agregar `holaamigo`'
+          : 'correr supabase/migrations/*.sql en orden',
+      });
+    }
+  }
+
+  // ── 3 · ¿Qué migraciones corrieron? ─────────────────────────────────────
+  if (schemaReachable) {
+    const groups: { name: string; tables: string[]; migration: string }[] = [
+      {
+        name: 'db:v1',
+        tables: ['organizations', 'intake_sessions', 'quiz_questions', 'diagnostics', 'agents'],
+        migration: '0001_init.sql + 0002_seed_quiz.sql',
+      },
+      {
+        name: 'db:v2',
+        tables: ['mailboxes', 'campaign_metrics', 'assets', 'bookings', 'feed_items', 'credit_ledger'],
+        migration: '0003_motor_de_correo.sql',
+      },
+    ];
+
+    for (const group of groups) {
+      const missing: string[] = [];
+      for (const table of group.tables) {
+        const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+        if (error) missing.push(table);
+      }
+      checks.push({
+        name: group.name,
+        ok: missing.length === 0,
+        detail:
+          missing.length === 0
+            ? `${group.tables.length} tablas presentes`
+            : `faltan: ${missing.join(', ')}`,
+        fix: missing.length === 0 ? undefined : `correr ${group.migration}`,
+      });
+    }
+
+    // ── v3: las claves que hacen que el quiz pueda guardar ────────────────
+    //
+    // Este chequeo no mira una tabla, mira una COLUMNA. `answer_key` es la
+    // columna generada que sostiene el índice único de `quiz_responses`. Sin
+    // ella, cada respuesta del quiz falla con 42P10 y —antes de esta versión—
+    // fallaba en silencio: la pantalla se quedaba en la misma pregunta y no
+    // había nada en los logs. Un curl a /api/health lo dice ahora en un
+    // segundo, que es lo que costó una semana descubrir a mano.
+    const v3: string[] = [];
+
+    const { error: keyError } = await db()
+      .from('quiz_responses')
+      .select('answer_key')
+      .limit(1);
+    if (keyError) v3.push('quiz_responses.answer_key');
+
+    const { error: settingsError } = await db().from('settings').select('key').limit(1);
+    if (settingsError) v3.push('settings');
+
+    checks.push({
+      name: 'db:v3',
+      ok: v3.length === 0,
+      detail:
+        v3.length === 0
+          ? 'clave del quiz y tabla de settings presentes'
+          : `faltan: ${v3.join(', ')}`,
+      fix: v3.length === 0 ? undefined : 'correr 0005_claves_y_settings.sql',
+    });
+
+    // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
+    // diagnóstico sale sin la cifra de fuga, que es el producto entero.
+    const { count } = await db()
+      .from('quiz_questions')
+      .select('id', { count: 'exact', head: true })
+      .eq('active', true);
+
+    checks.push({
+      name: 'db:seed_quiz',
+      ok: (count ?? 0) >= 6,
+      detail: `${count ?? 0} preguntas fijas activas`,
+      fix: (count ?? 0) >= 6 ? undefined : 'correr 0002_seed_quiz.sql',
+    });
+  }
+
+  // ── 4 · Correo (opcional: degrada, no rompe) ────────────────────────────
+  checks.push({
+    name: 'env:sendgrid',
+    ok: Boolean(env.sendgridApiKey),
+    detail: env.sendgridApiKey
+      ? 'campañas habilitadas'
+      : 'sin SENDGRID_API_KEY: los envíos se registran en el log y no salen',
+  });
+
+  // `db:v3` bloquea: sin la clave del quiz el producto no tiene camino feliz.
+  const blocking = checks.filter(
+    (check) =>
+      !check.ok &&
+      ['env:supabase', 'db:schema', 'db:v1', 'db:v3', 'db:seed_quiz'].includes(check.name),
+  );
+
+  const ok = blocking.length === 0;
+
+  if (!detailed) {
+    // Sin autenticar se ve QUÉ falla, no POR QUÉ. Los nombres de los chequeos
+    // no dicen nada que un atacante no pueda deducir mirando el producto; los
+    // mensajes de error sí nombran infraestructura, y esos quedan detrás del
+    // admin. La diferencia importa: sin esta lista, el operador tiene que
+    // loguearse para saber si vale la pena mirar.
+    return NextResponse.json(
+      { ok, checks: checks.map((check) => ({ name: check.name, ok: check.ok })) },
+      { status: ok ? 200 : 503 },
+    );
+  }
+
+  return NextResponse.json(
+    {
+      ok,
+      blocking: blocking.map((check) => check.name),
+      checks,
+      site_url: env.siteUrl,
+    },
+    { status: ok ? 200 : 503 },
+  );
+}

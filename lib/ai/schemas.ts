@@ -286,6 +286,97 @@ export function inflateDiagnosis(min: DiagnosisMinimal): Diagnosis {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// COPY DE CAMPAÑA — el CMO redacta la secuencia (v2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * El modelo escribe el TEXTO. No escribe la audiencia, ni el costo, ni el
+ * resultado esperado: eso lo calcula lib/campaigns/math.ts y config/credits.ts
+ * (ADR 0007). Si el copy falla, la campaña se propone igual con las plantillas
+ * de respaldo — una propuesta con copy genérico se puede editar; una propuesta
+ * que no existe no se puede aprobar.
+ */
+export const CampaignCopySchema = z.object({
+  angle_name: z.string().describe('Nombre del ángulo, máximo 6 palabras.'),
+  hypothesis: z.string().describe('Qué creemos que va a hacer que esta gente conteste.'),
+  steps: z.array(
+    z.object({
+      step_index: z.number().describe('Empieza en 0 y sigue el orden de la secuencia dada.'),
+      subject: z
+        .string()
+        .describe('Asunto en minúscula, máximo 7 palabras, sin signos de admiración.'),
+      body: z
+        .string()
+        .describe(
+          'Cuerpo del correo. Puede usar {{nombre}}, {{empresa}}, {{cargo}}, {{mi_nombre}}, {{mi_empresa}}. Sin firma: la pone el sistema.',
+        ),
+    }),
+  ),
+});
+export type CampaignCopy = z.infer<typeof CampaignCopySchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EL PRESIDENT REDACTA UNA PROPUESTA DEL FEED (v2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Mismo principio: el President recibe las cifras YA CALCULADAS y solo las
+ * redacta. Por eso no hay ningún campo numérico en este esquema. Si lo
+ * hubiera, tendríamos un agente que razona sobre dinero inventando el monto de
+ * su propia propuesta (§13.1).
+ */
+export const FeedProposalSchema = z.object({
+  title: z.string().describe('Máximo 10 palabras. Concreto, sin adjetivos.'),
+  body: z
+    .string()
+    .describe(
+      'Dos o tres frases dirigidas al dueño, tuteando. Menciona las cifras exactas que te dieron, sin cambiarlas ni redondearlas.',
+    ),
+  rationale: z.string().describe('Una frase: por qué esto y por qué ahora.'),
+  if_approved: z.string().describe('Qué pasa si aprueba, en una frase.'),
+  if_rejected: z.string().describe('Qué pasa si no, en una frase.'),
+});
+export type FeedProposal = z.infer<typeof FeedProposalSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESPUESTA DE CORREO — el agente SALES decide qué hacer con un inbound (v2)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Extiende InboundClassification con la decisión operativa: ¿esto se agenda
+ * solo, se contesta solo, o entra un humano? La acción `book` es la única que
+ * el agente puede ejecutar sin aprobación previa, y solo porque agendar no
+ * gasta dinero ni promete precio.
+ */
+export const EmailReplyDecisionSchema = z.object({
+  intent: z.enum([
+    'interested',
+    'not_interested',
+    'ask_price',
+    'ask_info',
+    'wants_meeting',
+    'wrong_person',
+    'out_of_office',
+    'opt_out',
+    'complaint',
+    'legal',
+    'other',
+  ]),
+  sentiment: z.enum(['positive', 'neutral', 'negative']),
+  action: z.enum(['book', 'reply', 'escalate', 'suppress', 'ignore']),
+  needs_human: z.boolean(),
+  reason: z.string().describe('Por qué esa acción. Una frase.'),
+  suggested_reply: z
+    .string()
+    .nullable()
+    .describe('Solo si action es reply o book. Máximo 45 palabras. Nunca promete precio.'),
+  /** Fecha y hora que el contacto propuso, si propuso alguna. El código valida
+   *  que exista el cupo: el modelo solo la lee del texto. */
+  proposed_time_iso: z.string().nullable(),
+});
+export type EmailReplyDecision = z.infer<typeof EmailReplyDecisionSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════
 // MAPEO DE COLUMNAS — el asistente de carga de leads (§4.6)
 // ═══════════════════════════════════════════════════════════════════════════
 

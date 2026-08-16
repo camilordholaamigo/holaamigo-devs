@@ -1,4 +1,4 @@
-import { db } from '@/lib/supabase/admin';
+import { db, mustWrite, tryWrite } from '@/lib/supabase/admin';
 import { alertSlack } from '@/lib/notify';
 import { env } from '@/lib/env';
 import { track } from '@/lib/events';
@@ -143,20 +143,26 @@ export async function refreshScore(organizationId: string): Promise<ScoreResult>
   const shouldAlert =
     score.band === 'attack' && existing?.band !== 'attack' && !existing?.alerted_at;
 
-  await db()
-    .from('prospect_scores')
-    .upsert(
-      {
-        organization_id: organizationId,
-        fit_score: score.fit,
-        intent_score: score.intent,
-        band: score.band,
-        reasons: score.reasons,
-        computed_at: new Date().toISOString(),
-        ...(shouldAlert ? { alerted_at: new Date().toISOString() } : {}),
-      },
-      { onConflict: 'organization_id' },
-    );
+  // `tryWrite`: el score alimenta la priorización del admin, no el flujo del
+  // cliente. Perderlo atrasa una llamada comercial; lanzar acá tumbaría la
+  // generación del diagnóstico, que es lo que el cliente está esperando.
+  await tryWrite(
+    db()
+      .from('prospect_scores')
+      .upsert(
+        {
+          organization_id: organizationId,
+          fit_score: score.fit,
+          intent_score: score.intent,
+          band: score.band,
+          reasons: score.reasons,
+          computed_at: new Date().toISOString(),
+          ...(shouldAlert ? { alerted_at: new Date().toISOString() } : {}),
+        },
+        { onConflict: 'organization_id' },
+      ),
+    'prospect_scores.upsert',
+  );
 
   if (shouldAlert) {
     const { data: org } = await db()
@@ -193,19 +199,24 @@ export async function overrideBand(args: {
     throw new Error('La nota es obligatoria para cambiar de banda.');
   }
 
-  await db()
-    .from('prospect_scores')
-    .upsert(
-      {
-        organization_id: args.organizationId,
-        manual_band: args.band,
-        band: args.band,
-        manual_note: args.note.trim(),
-        manual_by: args.by,
-        computed_at: new Date().toISOString(),
-      },
-      { onConflict: 'organization_id' },
-    );
+  // Acá sí `mustWrite`: es una acción explícita de un humano en el admin. Si no
+  // quedó guardada, tiene que verlo en la pantalla, no descubrirlo mañana.
+  await mustWrite(
+    db()
+      .from('prospect_scores')
+      .upsert(
+        {
+          organization_id: args.organizationId,
+          manual_band: args.band,
+          band: args.band,
+          manual_note: args.note.trim(),
+          manual_by: args.by,
+          computed_at: new Date().toISOString(),
+        },
+        { onConflict: 'organization_id' },
+      ),
+    'prospect_scores.override',
+  );
 
   await track('band_override', {
     organizationId: args.organizationId,

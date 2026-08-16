@@ -2,8 +2,14 @@ import OpenAI from 'openai';
 import { zodTextFormat } from 'openai/helpers/zod';
 import type { z } from 'zod';
 import { env } from '@/lib/env';
-import { db } from '@/lib/supabase/admin';
-import { MODEL_ROUTES, estimateCost, type StepName } from '@/config/models';
+import { db, tryWrite } from '@/lib/supabase/admin';
+import {
+  routeFor,
+  paramsFor,
+  estimateCost,
+  type StepConfig,
+  type StepName,
+} from '@/config/models';
 
 /**
  * Envoltura única sobre la Responses API de OpenAI.
@@ -87,22 +93,51 @@ function isToolUnsupported(err: unknown): boolean {
   return msg.includes('web_search') && (msg.includes('unsupported') || msg.includes('invalid'));
 }
 
+/**
+ * ¿El 400 dice "ese parámetro no va con este modelo"?
+ *
+ * Pasa con `temperature` en la familia gpt-5 y con `reasoning` en los modelos
+ * clásicos. `paramsFor()` ya evita el caso conocido; esto cubre el desconocido:
+ * un modelo nuevo que el admin escriba en el formulario y que no encaje en
+ * ninguna de las dos familias. Sin este camino, un nombre de modelo bien
+ * escrito pero de otra familia mata el paso entero — y no como
+ * `model_not_found`, así que la cadena de fallback tampoco lo salvaría.
+ */
+function unsupportedParam(err: unknown): 'temperature' | 'reasoning' | null {
+  const anyErr = err as { status?: number; message?: string; param?: string };
+  if (anyErr?.status !== 400) return null;
+  const haystack = `${anyErr.param ?? ''} ${anyErr.message ?? ''}`.toLowerCase();
+  if (!/unsupported|not supported|unknown parameter|does not support/.test(haystack)) return null;
+  if (haystack.includes('temperature')) return 'temperature';
+  if (haystack.includes('reasoning')) return 'reasoning';
+  return null;
+}
+
 interface RawCall {
   text: string;
   tokensIn: number;
   tokensOut: number;
   citations: { url: string; title: string }[];
+  /** `max_output_tokens` alcanzado: el modelo se quedó sin presupuesto. */
+  truncated: boolean;
+}
+
+interface CallShape {
+  useWebSearch: boolean;
+  webSearchType: 'web_search' | 'web_search_preview';
+  /** Parámetros que un 400 previo nos dijo que este modelo no acepta. */
+  drop: Set<'temperature' | 'reasoning'>;
 }
 
 async function callOnce(
   model: string,
   opts: RunOptions<unknown>,
+  route: StepConfig,
   schema: z.ZodType<unknown>,
   schemaName: string,
-  useWebSearch: boolean,
-  webSearchType: 'web_search' | 'web_search_preview',
+  shape: CallShape,
 ): Promise<RawCall> {
-  const route = MODEL_ROUTES[opts.step];
+  const params = paramsFor(model, route);
 
   const body: Record<string, unknown> = {
     model,
@@ -112,11 +147,17 @@ async function callOnce(
     text: { format: zodTextFormat(schema, schemaName) },
   };
 
-  if (route.temperature !== null) body.temperature = route.temperature;
-  if (useWebSearch) body.tools = [{ type: webSearchType }];
+  if (params.temperature !== null && !shape.drop.has('temperature')) {
+    body.temperature = params.temperature;
+  }
+  if (params.reasoningEffort !== null && !shape.drop.has('reasoning')) {
+    body.reasoning = { effort: params.reasoningEffort };
+  }
+  if (shape.useWebSearch) body.tools = [{ type: shape.webSearchType }];
 
-  // El body se arma dinámicamente (temperature y tools son condicionales), así
-  // que lo tipamos en el borde en vez de pelear con la unión del SDK.
+  // El body se arma dinámicamente (temperature, reasoning y tools son
+  // condicionales), así que lo tipamos en el borde en vez de pelear con la
+  // unión del SDK.
   const create = openai().responses.create.bind(openai().responses) as (
     b: Record<string, unknown>,
   ) => Promise<unknown>;
@@ -124,6 +165,8 @@ async function callOnce(
 
   const res = response as {
     output_text?: string;
+    status?: string;
+    incomplete_details?: { reason?: string };
     usage?: { input_tokens?: number; output_tokens?: number };
     output?: Array<{
       type: string;
@@ -151,18 +194,26 @@ async function callOnce(
     tokensIn: res.usage?.input_tokens ?? 0,
     tokensOut: res.usage?.output_tokens ?? 0,
     citations,
+    truncated:
+      res.status === 'incomplete' && res.incomplete_details?.reason === 'max_output_tokens',
   };
 }
 
 export async function runStructured<T>(opts: RunOptions<T>): Promise<RunResult<T>> {
-  const route = MODEL_ROUTES[opts.step];
-  const useWebSearch = opts.webSearch ?? route.webSearch;
+  // Se resuelve una sola vez por corrida: si el admin cambia el modelo a mitad
+  // de un diagnóstico, esa corrida termina con el que empezó. Cambiar de modelo
+  // entre el intento 1 y el 2 haría imposible leer los logs.
+  const route = await routeFor(opts.step);
   const startedAt = Date.now();
 
   let tokensIn = 0;
   let tokensOut = 0;
   let lastError: unknown = null;
-  let webSearchType: 'web_search' | 'web_search_preview' = 'web_search';
+  const shape: CallShape = {
+    useWebSearch: opts.webSearch ?? route.webSearch,
+    webSearchType: 'web_search',
+    drop: new Set(),
+  };
 
   // Dos intentos con el esquema pedido; si el llamador ofrece uno degradado,
   // un tercero con ese. Cada intento puede rotar de modelo por indisponibilidad.
@@ -189,28 +240,34 @@ export async function runStructured<T>(opts: RunOptions<T>): Promise<RunResult<T
   for (const attempt of attempts) {
     for (const model of route.models) {
       try {
-        let raw: RawCall;
-        try {
-          raw = await callOnce(
+        const call = () =>
+          callOnce(
             model,
             opts as unknown as RunOptions<unknown>,
+            route,
             attempt.schema,
             attempt.name,
-            useWebSearch,
-            webSearchType,
+            shape,
           );
+
+        let raw: RawCall;
+        try {
+          raw = await call();
         } catch (err) {
-          if (useWebSearch && webSearchType === 'web_search' && isToolUnsupported(err)) {
+          const dropped = unsupportedParam(err);
+          if (dropped && !shape.drop.has(dropped)) {
+            // El modelo no acepta ese parámetro. Se anota para el resto de la
+            // corrida y se reintenta sin él, en vez de dar el paso por perdido.
+            shape.drop.add(dropped);
+            raw = await call();
+          } else if (
+            shape.useWebSearch &&
+            shape.webSearchType === 'web_search' &&
+            isToolUnsupported(err)
+          ) {
             // Cuenta antigua: el tool se llama distinto. Reintentamos una vez.
-            webSearchType = 'web_search_preview';
-            raw = await callOnce(
-              model,
-              opts as unknown as RunOptions<unknown>,
-              attempt.schema,
-              attempt.name,
-              useWebSearch,
-              webSearchType,
-            );
+            shape.webSearchType = 'web_search_preview';
+            raw = await call();
           } else if (isModelUnavailable(err)) {
             throw new ModelUnavailableError(String((err as Error)?.message ?? err));
           } else {
@@ -221,7 +278,28 @@ export async function runStructured<T>(opts: RunOptions<T>): Promise<RunResult<T
         tokensIn += raw.tokensIn;
         tokensOut += raw.tokensOut;
 
-        const parsed = attempt.schema.safeParse(JSON.parse(raw.text || '{}'));
+        if (raw.truncated || !raw.text.trim()) {
+          // Casi siempre es un modelo de razonamiento que gastó el presupuesto
+          // pensando y no alcanzó a escribir. El mensaje lo dice explícito
+          // porque desde afuera se ve idéntico a un fallo de esquema, y así se
+          // perdieron horas: la solución es subir maxOutputTokens o bajar el
+          // esfuerzo en /admin/modelos, no tocar el esquema.
+          lastError = new Error(
+            `${model} devolvió una respuesta vacía o cortada con max_output_tokens=${route.maxOutputTokens}. ` +
+              'Sube el tope de tokens o baja el esfuerzo de razonamiento en /admin/modelos.',
+          );
+          break; // mismo modelo, siguiente intento del bucle externo
+        }
+
+        let payload: unknown;
+        try {
+          payload = JSON.parse(raw.text);
+        } catch {
+          lastError = new Error(`${model} devolvió algo que no es JSON: ${raw.text.slice(0, 200)}`);
+          break;
+        }
+
+        const parsed = attempt.schema.safeParse(payload);
         if (!parsed.success) {
           lastError = new Error(
             `salida inválida contra ${attempt.name}: ${parsed.error.issues
@@ -296,8 +374,11 @@ async function logRun(
     output: unknown;
   },
 ): Promise<void> {
-  try {
-    await db()
+  // `tryWrite` y no `mustWrite`: el log nunca debe tumbar la corrida real, pero
+  // tampoco puede desaparecer sin dejar rastro — sin `agent_runs` no se puede
+  // responder "¿cuánto costó este diagnóstico?".
+  await tryWrite(
+    db()
       .from('agent_runs')
       .insert({
         agent_id: opts.agentId ?? null,
@@ -314,11 +395,9 @@ async function logRun(
         duration_ms: result.durationMs,
         status: result.status,
         error: result.error,
-      });
-  } catch (err) {
-    // El log nunca debe tumbar la corrida real.
-    console.error('[ai] no se pudo registrar agent_run', err);
-  }
+      }),
+    'agent_runs.insert',
+  );
 }
 
 /** Gasto acumulado de IA de una organización, para el tope por sesión (§10). */

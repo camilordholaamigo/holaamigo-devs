@@ -48,8 +48,23 @@ déjalo.
 
 ```bash
 npx tsc --noEmit
+npm run lint          # el compilador de React es parte del linter y es estricto
 npm run build
+npm test              # migraciones y claves contra Postgres real (PGlite)
 ```
 
 Y actualizar `docs/CHANGELOG.md` con qué cambió **y qué hay que hacer para
 desplegarlo**.
+
+## Dos trampas que ya nos costaron caro
+
+**`supabase-js` no lanza: devuelve `{ error }`.** Un `await db().from(x).insert(...)`
+sin mirar el error compila, corre y no escribe nada, en silencio. Usa
+`mustWrite()` para lo que no se puede perder y `tryWrite()` para telemetría.
+Nunca un `await` pelado.
+
+**Una clave de `onConflict` tiene que ser un índice único plano.** Si el índice
+tiene `where` o una función (`lower(...)`), Postgres no lo puede usar como
+árbitro y la escritura falla con `42P10`. El `onConflict` y su
+`create unique index` se escriben en el mismo PR.
+Ver [ADR 0015](docs/adr/0015-claves-de-upsert-planas.md).
