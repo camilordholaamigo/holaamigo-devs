@@ -13,7 +13,13 @@
 | **P3 · La Sala** | ✅ entregada — 2026-08-16 | [wiki/17](../wiki/17-la-sala-el-feed-y-el-capitulo.md) · [ADR 0019](../adr/0019-la-deliberacion-como-objeto.md) · `0008_la_sala.sql` |
 | **P4 · Presidente/CRO** | ✅ entregada — 2026-08-16 | [wiki/18](../wiki/18-el-president-como-cro.md) · [ADR 0020](../adr/0020-pre-registro-y-economia-por-canal.md) · `0009_cro.sql` |
 | **P5 · CMO expandida** | ✅ entregada — 2026-08-16 | [wiki/19](../wiki/19-la-cmo-expandida.md) · [ADR 0021](../adr/0021-la-cmo-expandida.md) · `0010_cmo.sql` |
-| **P6 · Integraciones y CRM** | pendiente | |
+| **P6 · Integraciones y CRM** | ✅ entregada — 2026-08-16 | [wiki/20](../wiki/20-integraciones-crm-y-habilidades.md) · [ADR 0022](../adr/0022-habilidades-y-crm-con-actor.md) · `0011_integraciones.sql` |
+
+**Plan completo.** Las seis partes están entregadas, con 229 chequeos contra
+Postgres real en `npm test`. Lo que sigue no es P7: es traer clientes y ver qué
+se rompe. Cada parte tiene su sección "Lo que NO hay todavía" en la wiki, y esa
+lista se reordena con lo que pidan los primeros cinco, no con lo que nos parezca
+elegante.
 
 ---
 

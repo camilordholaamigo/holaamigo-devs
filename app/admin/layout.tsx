@@ -25,6 +25,7 @@ const NAV = [
   { href: '/admin/senales', label: 'Señales' },
   { href: '/admin/agents', label: 'Agentes' },
   { href: '/admin/runs', label: 'Corridas' },
+  { href: '/admin/habilidades', label: 'Habilidades' },
   { href: '/admin/modelos', label: 'Modelos' },
 ];
 

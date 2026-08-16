@@ -8,6 +8,76 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.5.0] — 2026-08-16 · P6 · Integraciones, CRM propio y habilidades
+
+Sexta y última parte del plan de la meta-organización. P2 definió qué puede
+**hacer** un agente; esto define qué puede **usar**, y guarda quién hizo qué.
+
+### Agregado
+
+- **El registro de habilidades.** `skills`, `skill_grants` y `skill_requests`,
+  con catálogo de 9 herramientas sembrado. El tool list de runtime es la
+  intersección de cuatro conjuntos, y el cuarto usa **las mismas funciones del
+  motor de permisos de P2**: subir la autonomía de un agente hace aparecer una
+  habilidad sin desplegar, y bajar el plan la hace desaparecer aunque el grant
+  siga ahí. Ver [ADR 0022](adr/0022-habilidades-y-crm-con-actor.md).
+
+- **La regla dura, con trigger.** Ninguna habilidad de clase `spend` o
+  `irreversible` se enciende sin operador y sin sobre: *sin tope no es un
+  permiso, es una firma en blanco*.
+
+- **El "intraer".** `conHabilidad()` ejecuta si el agente tiene la herramienta y,
+  si no, deja un pedido con su justificación y **la decisión que quedó
+  bloqueada**. Aparece en `/admin/habilidades`. Los agentes empujan capacidades
+  hacia sí mismos; nosotros decidimos cuáles existen.
+
+- **HubSpot y la ingesta.** Sync incremental con cursor hacia
+  `staging_contacts`. **Los contactos no entran a operación hasta que se
+  analicen** — obliga a pasar por el paso que paga y evita que 8.000 contactos
+  crudos aparezcan como leads trabajables. La credencial se referencia por
+  nombre de variable de entorno, no se guarda en la tabla.
+
+- **Lotes de análisis y reactivación.** El sistema propone el tamaño (los que
+  interactuaron en 18 meses, acotado al saldo), cotiza, espera aprobación y
+  **después** cobra. El cobro es atómico en SQL: el estado del lote es el candado
+  contra el doble cobro. La clasificación de temperatura es por reglas de
+  recencia, no por modelo.
+
+- **El CRM propio, con trazabilidad de actor.** `opportunities` y `touchpoints`:
+  cada toque sabe quién lo hizo (agente o humano), qué decisión lo originó y
+  cuánto costó. La vista `lead_timeline` resuelve el costo por paso. Ningún CRM
+  del mercado puede pintar esa línea.
+
+- **Pantallas:** `/consola/[orgId]/crm` (pipeline + línea de tiempo) y
+  `/admin/habilidades` (pedidos y catálogo).
+
+- **`/api/cron/datos`** — sincroniza, propone lotes y corre los aprobados.
+
+- **`node scripts/test-integraciones.mjs`** — 30 chequeos con los cinco
+  criterios de aceptación de P6.
+
+### Cambiado
+
+- `integrations` (de `0003`) se **extiende** en vez de recrearse: gana
+  `credentials_ref`, `config`, `cursor` y `connected_by`, y su `check` de
+  proveedor acepta los nuevos. Un `create table if not exists` sobre una tabla
+  con otra forma no falla — no hace nada, y el error aparece después con un
+  mensaje que no dice por qué. Lo encontró la prueba.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0011_integraciones.sql`.** Idempotente; siembra
+   el catálogo de habilidades y lo actualiza en cada corrida.
+2. Verificar `db:v9` en `GET /api/health?key=$CRON_SECRET`.
+3. **Para conectar HubSpot de un cliente:** poner el token en una variable de
+   entorno (por ejemplo `HUBSPOT_TOKEN_ACME`) y llamar a `conectar()` con ese
+   nombre como `credentialsRef`. El OAuth es de una tarde y se escribe cuando
+   haya tres clientes con HubSpot, no antes (§13.3).
+4. Las habilidades de clase `spend` e `irreversible` se otorgan **desde SQL**,
+   con el sobre escrito y revisado. La UI de admin las rechaza a propósito.
+
+---
+
 ## [3.4.0] — 2026-08-16 · P5 · La CMO expandida
 
 Quinta de las seis partes. Seis funciones que hoy nadie hace porque no da el

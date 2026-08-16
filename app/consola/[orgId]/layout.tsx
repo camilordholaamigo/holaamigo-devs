@@ -31,6 +31,7 @@ const NAV = [
   { segment: 'sala', label: 'La Sala' },
   { segment: 'campanas', label: 'Campañas' },
   { segment: 'marca', label: 'Marca' },
+  { segment: 'crm', label: 'CRM' },
   { segment: 'bandeja', label: 'Bandeja' },
   { segment: 'agenda', label: 'Agenda' },
   { segment: 'activos', label: 'Activos' },

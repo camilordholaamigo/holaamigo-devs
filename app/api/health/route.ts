@@ -302,6 +302,40 @@ export async function GET(request: Request) {
       fix: v8.length === 0 ? undefined : 'correr 0010_cmo.sql',
     });
 
+    // ── v9: habilidades y CRM (P6) ────────────────────────────────────────
+    //
+    // Se comprueba que el catálogo esté sembrado y que la intersección de
+    // habilidades responda. Que devuelva una lista vacía para una organización
+    // inexistente es lo correcto: falla cerrado, igual que el motor de permisos.
+    const v9: string[] = [];
+
+    for (const table of ['skills', 'skill_grants', 'skill_requests', 'staging_contacts', 'opportunities', 'lead_timeline']) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v9.push(table);
+    }
+
+    const { count: skillCount } = await db()
+      .from('skills')
+      .select('id', { count: 'exact', head: true });
+    if ((skillCount ?? 0) < 8) v9.push(`catálogo incompleto (${skillCount ?? 0} habilidades)`);
+
+    const { data: lista, error: skillError } = await db().rpc('habilidades_activas', {
+      p_org: '00000000-0000-0000-0000-000000000000',
+      p_role: 'sales',
+    });
+    if (skillError) v9.push('rpc:habilidades_activas');
+    else if ((lista as unknown[])?.length > 0) v9.push('el tool list no falla cerrado');
+
+    checks.push({
+      name: 'db:v9',
+      ok: v9.length === 0,
+      detail:
+        v9.length === 0
+          ? `${skillCount} habilidades en catálogo y el tool list falla cerrado`
+          : `problemas: ${v9.join(', ')}`,
+      fix: v9.length === 0 ? undefined : 'correr 0011_integraciones.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()

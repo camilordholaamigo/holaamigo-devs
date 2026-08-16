@@ -26,6 +26,10 @@
     {
       "path": "/api/cron/cmo",
       "schedule": "0 14 * * *"
+    },
+    {
+      "path": "/api/cron/datos",
+      "schedule": "0 15 * * *"
     }
   ],
   "headers": [
