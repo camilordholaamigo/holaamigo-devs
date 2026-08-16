@@ -10,6 +10,10 @@
     {
       "path": "/api/cron/dispatch",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/destilar",
+      "schedule": "0 7 * * *"
     }
   ],
   "headers": [

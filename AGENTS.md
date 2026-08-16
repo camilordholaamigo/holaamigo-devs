@@ -26,6 +26,7 @@ ejecutar → documentar. No se salta ningún paso, ni cuando hay prisa.
 | **Los esquemas Zod que van a OpenAI no usan `.optional()`, `.min()`, `.max()`, `.url()` ni `.email()`.** Usa `.nullable()` y valida rangos después. | `lib/ai/schemas.ts` |
 | **`lib/diagnostic/math.ts` no puede importar nada de servidor.** Corre también en el navegador para el recálculo en vivo. | [wiki/06](docs/wiki/06-diagnostico-y-matematica.md) |
 | **Los errores de telemetría nunca lanzan.** `track()`, `alertSlack()` y `sendDiagnosticEmail()` capturan y registran. | `lib/events.ts` |
+| **Toda decisión de agente lleva predicción y al menos dos opciones.** Lo exige la base, no el código. Y el `outcome` solo se escribe con `holaamigo.cerrar_decision()`. | [ADR 0016](docs/adr/0016-la-microdecision-como-unidad.md) |
 
 ## Los seis principios (PRD §13)
 

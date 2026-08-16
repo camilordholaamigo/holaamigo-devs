@@ -8,6 +8,76 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.0.0] — 2026-08-15 · P1 · El sustrato
+
+Primera de las seis partes del plan de la meta-organización
+([`docs/plan/meta-organizacion.md`](plan/meta-organizacion.md)). **No hay una
+sola pantalla nueva**: es la capa sobre la que descansan P2 a P6. Si se salta o
+se hace a medias, todo lo demás se construye sobre arena.
+
+### Agregado
+
+- **La microdecisión como unidad del sistema.** Tabla `decisions`: qué se
+  decidió, con qué alternativas, con qué evidencia, **qué se predijo** y **qué
+  pasó**. Tres invariantes viven en `check` constraints de la base y no en el
+  código: mínimo dos opciones, predicción obligatoria (salvo `escalate` y
+  `handoff`), y la predicción con métrica, valor esperado y horizonte.
+  Ver [ADR 0016](adr/0016-la-microdecision-como-unidad.md).
+
+- **Trazas y costo por decisión.** `traces` registra cada paso de ejecución con
+  su `run_id`; `holaamigo.imputar_costos()` reparte el costo de cada corrida
+  entre las decisiones que produjo; la vista `cost_rollup` agrega por
+  organización, agente, día y tipo de decisión y **cuadra exacto** contra la
+  suma cruda de trazas. Las trazas se purgan a los 90 días, las decisiones no.
+
+- **Calibración.** `holaamigo.calibracion(esperado, real)` y
+  `holaamigo.cerrar_decision()`, que escribe el resultado y la calibración en la
+  misma sentencia — es imposible guardar un `outcome` sin ella.
+
+- **El destilador, en SQL.** `holaamigo.destilar()` agrupa decisiones medidas
+  por tipo × contexto × métrica y escribe lecciones con `n`, `lift` y confianza
+  calculados, sin llamar al modelo (ADR 0007 aplicado al aprendizaje). Las de
+  alcance `organization` con confianza > 0,7 se activan solas; las de `industry`
+  y `global` **no pueden quedar activas sin firma humana**, y eso es un `check`
+  en la base, no una convención. Ver [ADR 0017](adr/0017-lecciones-sin-pgvector.md).
+
+- **Inyección de contexto aprendido.** `buildLearningContext()` recupera las 5–8
+  lecciones más relevantes (similitud + confianza + alcance) más lo que escribió
+  el humano (`human_inputs`, con peso), y deja traza de qué leyó el agente. Las
+  lecciones no se hornean en el prompt.
+
+- **La primera decisión real.** La elección de ruta del President en
+  `lib/diagnostic/generate.ts` ahora se registra como decisión: tres opciones
+  con su costo calculado, una elegida, y predicción medible a 90 días.
+
+- **`GET /api/cron/destilar`** — pasada nocturna (07:00 UTC): destila, calcula
+  vectores, imputa costos y purga trazas viejas.
+
+- **`node scripts/test-sustrato.mjs`** — los cuatro criterios de aceptación de
+  P1 como pruebas contra Postgres real (PGlite). Ya está en `npm test`.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0006_sustrato.sql`** en el SQL Editor de
+   Supabase. Es idempotente.
+2. Verificar con `GET /api/health?key=$CRON_SECRET` que `db:v4` esté en `ok`.
+   Ese chequeo mira las cinco relaciones **y** la función `calibracion` por RPC:
+   sin el `grant execute` las tablas existen igual y el aprendizaje se queda
+   mudo sin error visible.
+3. El cron nuevo se registra solo con el deploy (`vercel.json`). Requiere
+   `CRON_SECRET`, que ya existe.
+4. Sin variables de entorno nuevas. Los embeddings usan la `OPENAI_API_KEY` que
+   ya está; si falta, la recuperación degrada a solape de palabras.
+
+### Notas
+
+- No hay UI. Se valida por SQL, por `/api/health` y por `npm test`.
+- La medición automática de resultados (quién escribe el `outcome`) llega en P4
+  con el motor de experimentos. En P1 `settleDecision()` está disponible y
+  `decisionesPorMedir()` lista las que ya vencieron su horizonte.
+
+---
+
 ## [2.1.0] — 2026-08-15
 
 Barrido de bugs antes de traer clientes. El quiz volvió a funcionar, los fallos

@@ -45,6 +45,18 @@ El President habla lib/feed/president.ts → 13
 Los números        lib/observability/summary.ts → 14
 ```
 
+## Y debajo de todo: el sustrato (v3, en construcción)
+
+```
+Cada paso            lib/traces/record.ts       → 15
+   ↓
+Cada decisión        lib/decisions/record.ts    → 15   con predicción, siempre
+   ↓ se mide
+Cada lección         lib/learning/distill.ts    → 15   destilada en SQL, de noche
+   ↓ se inyecta
+La siguiente corrida lib/learning/context.ts    → 15
+```
+
 ## Índice
 
 | # | Página | De qué trata |
@@ -63,6 +75,7 @@ Los números        lib/observability/summary.ts → 14
 | 12 | [Activos: agenda y checkout](./12-activos-agenda-y-checkout.md) | El mini-Calendly, el botón de pago, inventario y atribución |
 | 13 | [Feed y autonomía](./13-feed-y-autonomia.md) | Cómo habla el President, cuánto puede hacer solo cada agente |
 | 14 | [Observabilidad](./14-observabilidad.md) | Qué está programado, esperado vs real, salud y consumo |
+| 15 | [El sustrato](./15-sustrato-decisiones-y-aprendizaje.md) | Decisiones con predicción, trazas, lecciones destiladas y costo por decisión |
 
 ## Los seis principios que gobiernan todo
 

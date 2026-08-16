@@ -140,6 +140,33 @@ export async function GET(request: Request) {
       fix: v3.length === 0 ? undefined : 'correr 0005_claves_y_settings.sql',
     });
 
+    // ── v4: el sustrato (P1) ──────────────────────────────────────────────
+    //
+    // Aquí se mira una FUNCIÓN, no solo las tablas. `holaamigo.calibracion` es
+    // la que convierte una predicción en aprendizaje, y se llama por RPC: si el
+    // `grant execute` no corrió, las tablas existen, la migración "aparenta"
+    // haber pasado, y el ciclo de aprendizaje se queda mudo sin un solo error
+    // visible. Es el mismo modo de falla de `Invalid schema`, un nivel abajo.
+    const v4: string[] = [];
+
+    for (const table of ['traces', 'decisions', 'lessons', 'human_inputs', 'cost_rollup']) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v4.push(table);
+    }
+
+    const { error: rpcError } = await db().rpc('calibracion', { p_esperado: 100, p_real: 80 });
+    if (rpcError) v4.push('rpc:calibracion');
+
+    checks.push({
+      name: 'db:v4',
+      ok: v4.length === 0,
+      detail:
+        v4.length === 0
+          ? 'sustrato completo: trazas, decisiones, lecciones y funciones'
+          : `faltan: ${v4.join(', ')}`,
+      fix: v4.length === 0 ? undefined : 'correr 0006_sustrato.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()

@@ -3,6 +3,7 @@ import { zodTextFormat } from 'openai/helpers/zod';
 import type { z } from 'zod';
 import { env } from '@/lib/env';
 import { db, tryWrite } from '@/lib/supabase/admin';
+import { trace } from '@/lib/traces/record';
 import {
   routeFor,
   paramsFor,
@@ -52,6 +53,15 @@ export interface RunOptions<T> {
   agentId?: string | null;
   role?: 'president' | 'cmo' | 'sales' | null;
   trigger?: string;
+  /**
+   * Corrida a la que pertenece este paso (P1 · el sustrato).
+   *
+   * Sin `runId` la llamada se registra igual en `agent_runs`, pero no deja
+   * traza — y sin traza no hay costo por corrida, así que la decisión que salga
+   * de este paso se queda sin costo imputado. Todo camino que produzca una
+   * decisión tiene que pasar un `runId`.
+   */
+  runId?: string | null;
   /**
    * Fallback si el esquema principal falla dos veces. Puede tener otra forma:
    * `inflate` la lleva de vuelta a `T` para que el llamador no bifurque.
@@ -398,6 +408,29 @@ async function logRun(
       }),
     'agent_runs.insert',
   );
+
+  // La misma llamada, en la capa de abajo. `agent_runs` responde "¿cuánto costó
+  // este diagnóstico?"; `traces` responde "¿qué pasó adentro de esta corrida y
+  // cuánto le toca a cada decisión que salió de ella?". No es duplicación: son
+  // dos preguntas distintas con dos vidas distintas — las trazas se purgan a
+  // los 90 días, `agent_runs` no.
+  if (opts.runId) {
+    await trace({
+      organizationId: opts.organizationId ?? null,
+      agentId: opts.agentId ?? null,
+      role: opts.role ?? null,
+      runId: opts.runId,
+      stepType: result.status === 'failed' ? 'error' : 'output',
+      name: opts.step,
+      input: { system: opts.system.slice(0, 2000), input: opts.input.slice(0, 8000) },
+      output: result.status === 'failed' ? { error: result.error } : result.output,
+      model: result.model,
+      tokensIn: result.tokensIn,
+      tokensOut: result.tokensOut,
+      costUsd: result.costUsd,
+      durationMs: result.durationMs,
+    });
+  }
 }
 
 /** Gasto acumulado de IA de una organización, para el tope por sesión (§10). */

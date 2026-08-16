@@ -18,6 +18,9 @@ import {
 } from '@/lib/diagnostic/math';
 import { buildRoutes } from '@/config/routes';
 import { provisionAgents, agentIdFor } from '@/lib/agents/contracts';
+import { newRunId } from '@/lib/traces/record';
+import { buildLearningContext } from '@/lib/learning/context';
+import { recordDecision, imputarCostos } from '@/lib/decisions/record';
 import { refreshScore } from '@/lib/scoring';
 import { track } from '@/lib/events';
 import { sendDiagnosticEmail } from '@/lib/notify';
@@ -112,6 +115,24 @@ export async function generateDiagnostic(args: {
   });
 
   // ── El President ensambla ────────────────────────────────────────────────
+  //
+  // Una corrida (`runId`) agrupa todos los pasos de esta generación. Es lo que
+  // permite después imputarle el costo a la decisión que salga de acá: el costo
+  // se mide por corrida y se reparte entre lo que la corrida decidió.
+  const runId = newRunId();
+
+  // Lo que la organización ya aprendió entra como contexto, no como prompt.
+  // La primera vez está vacío y no pasa nada: el bloque solo aparece cuando hay
+  // lecciones activas, y su presencia queda registrada en `traces`.
+  const learning = await buildLearningContext({
+    organizationId,
+    role: 'president',
+    industry: org.industry,
+    task: `Recomendar ruta de crecimiento para ${org.name ?? org.domain} en ${org.industry ?? 'su industria'}`,
+    kind: 'route_recommendation',
+    runId,
+  });
+
   let diagnosis: Diagnosis;
   let degraded = false;
 
@@ -121,10 +142,13 @@ export async function generateDiagnostic(args: {
       schemaName: 'diagnosis',
       schema: DiagnosisSchema,
       system: DIAGNOSIS_SYSTEM,
-      input: buildDiagnosisInput({ org, answers, research, assumptions }),
+      input: [buildDiagnosisInput({ org, answers, research, assumptions }), learning.block]
+        .filter(Boolean)
+        .join('\n\n'),
       organizationId,
       role: 'president',
       trigger: 'intake',
+      runId,
       degradeTo: {
         schema: DiagnosisMinimalSchema,
         schemaName: 'diagnosis_minimal',
@@ -242,6 +266,28 @@ export async function generateDiagnostic(args: {
     goalCustomers90d: assumptions.goal_customers_90d,
   });
 
+  // ── La primera microdecisión de la empresa ───────────────────────────────
+  //
+  // Recomendar una ruta ES una decisión: hay tres opciones con costo y con
+  // consecuencia, se escoge una, y en 90 días se va a poder saber si esa
+  // elección funcionó. Registrarla acá es lo que hace que P1 no sea plomería
+  // dormida: desde la primera sesión hay una decisión con predicción medible.
+  //
+  // Se registra DESPUÉS de provisionar agentes para poder colgarla del
+  // President; si el agente no existiera, la decisión igual se guarda (la
+  // columna es nullable a propósito).
+  await recordRouteDecision({
+    organizationId,
+    runId,
+    routes,
+    recommended,
+    diagnosis,
+    assumptions,
+    inverseMath,
+    learning,
+    researchQuality,
+  });
+
   // ── Ángulos propuestos + su aprobación ───────────────────────────────────
   await proposeAngles(organizationId, diagnosis);
 
@@ -268,6 +314,12 @@ export async function generateDiagnostic(args: {
 
   await refreshScore(organizationId);
 
+  // El costo de la corrida se reparte entre las decisiones que produjo. Se hace
+  // acá y no solo en el cron nocturno para que el número esté disponible
+  // enseguida: si el operador mira la decisión a los cinco minutos y ve
+  // `cost_usd: null`, aprende a no confiar en la columna.
+  await imputarCostos(organizationId);
+
   // ── Correo con el enlace permanente (§4.3) ───────────────────────────────
   if (session.contact_email) {
     await sendDiagnosticEmail({
@@ -289,6 +341,94 @@ export async function generateDiagnostic(args: {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Registra la elección de ruta como microdecisión (P1).
+ *
+ * Las tres invariantes del sustrato se cumplen naturalmente acá, y eso no es
+ * casualidad: si una elección no tiene tres opciones con costo, una razón y una
+ * consecuencia medible, es que no era una elección.
+ *
+ *   opciones      las 3 rutas, con su costo real calculado por `buildRoutes`
+ *   predicción    los clientes nuevos a 90 días de la cuenta al revés
+ *   evidencia     las fuentes del research, las lecciones inyectadas, la
+ *                 factibilidad aritmética
+ *
+ * Nunca lanza. Que el diagnóstico del cliente se caiga porque no se pudo
+ * escribir el registro de la decisión sería exactamente al revés de lo que
+ * queremos: el registro sirve al producto, no al contrario.
+ */
+async function recordRouteDecision(args: {
+  organizationId: string;
+  runId: string;
+  routes: ReturnType<typeof buildRoutes>;
+  recommended: string;
+  diagnosis: Diagnosis;
+  assumptions: Assumptions;
+  inverseMath: ReturnType<typeof computeInverseMath>;
+  learning: { lessonIds: string[]; humanInputIds: string[] };
+  researchQuality: 'full' | 'partial' | 'none';
+}): Promise<void> {
+  try {
+    const presidentId = await agentIdFor(args.organizationId, 'president');
+    const elegida = args.routes.find((r) => r.route === args.recommended) ?? args.routes[0];
+
+    await recordDecision({
+      organizationId: args.organizationId,
+      agentId: presidentId,
+      role: 'president',
+      runId: args.runId,
+      kind: 'route_recommendation',
+      question: '¿Con cuál de las tres rutas arrancamos?',
+      context: { segment: 'diagnostico', channel: elegida.route },
+      optionsConsidered: args.routes.map((route) => ({
+        label: route.route,
+        pros: route.bullets.slice(0, 2),
+        cons: route.prerequisites.slice(0, 2),
+        est_cost_usd: route.cost_infra_usd + route.cost_fee_usd,
+        est_impact: route.tagline,
+      })),
+      chosen: {
+        label: elegida.route,
+        payload: {
+          costo_infra_usd: elegida.cost_infra_usd,
+          costo_fee_usd: elegida.cost_fee_usd,
+          proyeccion: elegida.projected_impact,
+        },
+      },
+      rationale: args.diagnosis.recommended_rationale,
+      evidence: [
+        {
+          type: 'metric',
+          ref: 'cuenta_al_reves',
+          note: args.inverseMath.feasible
+            ? `la meta de ${args.assumptions.goal_customers_90d} clientes es alcanzable con el volumen declarado`
+            : (args.inverseMath.infeasible_reason ?? 'la meta no cierra con el volumen declarado'),
+        },
+        { type: 'source', ref: `research:${args.researchQuality}` },
+        ...args.learning.lessonIds.map((id) => ({ type: 'lesson' as const, ref: id })),
+        ...args.learning.humanInputIds.map((id) => ({ type: 'human' as const, ref: id })),
+      ],
+      lessonIds: args.learning.lessonIds,
+      humanInputIds: args.learning.humanInputIds,
+      prediction: {
+        metric: 'clientes_nuevos_90d',
+        expected_value: args.assumptions.goal_customers_90d,
+        horizon_days: 90,
+        // La confianza baja cuando el research no pudo leer el sitio o cuando la
+        // aritmética no cierra: predecir con la misma seguridad en los dos casos
+        // sería registrar una confianza que no tenemos.
+        confidence: (args.researchQuality === 'full' ? 0.6 : 0.4) * (args.inverseMath.feasible ? 1 : 0.5),
+        direction: 'up',
+      },
+      // Es reversible: cambiar de ruta antes de conectar canales no cuesta nada
+      // más que la conversación.
+      reversible: true,
+    });
+  } catch (err) {
+    console.error('[diagnostic] no se pudo registrar la decisión de ruta', err);
+  }
+}
 
 async function findExisting(sessionId: string): Promise<GenerateResult | null> {
   const { data } = await db()
