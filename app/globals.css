@@ -179,3 +179,37 @@ input[type="range"]::-moz-range-thumb {
   text-wrap: pretty;
   hyphens: auto;
 }
+
+/* ── El libro de resultados en PDF (P4) ─────────────────────────────────────
+   "Descargar PDF" es el diálogo de impresión del navegador. Estas reglas son
+   las que hacen que el resultado se vea como un documento y no como una captura
+   de pantalla: sin fondos de color que gasten tóner, con las tablas enteras en
+   una página, y sin la navegación de la consola. */
+@media print {
+  header,
+  nav,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  body {
+    background: #ffffff;
+    font-size: 11pt;
+  }
+
+  table {
+    page-break-inside: auto;
+  }
+
+  tr {
+    page-break-inside: avoid;
+  }
+
+  section {
+    page-break-inside: avoid;
+  }
+
+  @page {
+    margin: 18mm 14mm;
+  }
+}

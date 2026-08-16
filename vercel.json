@@ -18,6 +18,10 @@
     {
       "path": "/api/cron/capitulo",
       "schedule": "0 12 * * *"
+    },
+    {
+      "path": "/api/cron/mes",
+      "schedule": "0 13 1 * *"
     }
   ],
   "headers": [

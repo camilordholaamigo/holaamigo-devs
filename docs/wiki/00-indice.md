@@ -88,6 +88,7 @@ guard_events                                     → 16
 | 15 | [El sustrato](./15-sustrato-decisiones-y-aprendizaje.md) | Decisiones con predicción, trazas, lecciones destiladas y costo por decisión |
 | 16 | [Gobierno](./16-gobierno-capacidades-y-sobres.md) | La escalera L0–L5, los tres diales, los sobres y la única puerta |
 | 17 | [La Sala, el Feed y el Capítulo](./17-la-sala-el-feed-y-el-capitulo.md) | La deliberación visible, el límite de siete, el teclado y la serie diaria |
+| 18 | [El President como CRO](./18-el-president-como-cro.md) | P&G por canal, CAC y payback, pre-registro de experimentos y el libro de resultados |
 
 ## Los seis principios que gobiernan todo
 

@@ -242,6 +242,37 @@ export async function GET(request: Request) {
       fix: v6.length === 0 ? undefined : 'correr 0008_la_sala.sql',
     });
 
+    // ── v7: el CRO (P4) ───────────────────────────────────────────────────
+    //
+    // Lo que se comprueba, otra vez, no es que las tablas existan: es que el
+    // readout aplique la regla declarada. Se le pide el readout de un
+    // experimento inexistente y se exige que responda con error de dominio. Si
+    // contestara "ok", el pre-registro sería decorativo.
+    const v7: string[] = [];
+
+    for (const table of ['channels', 'revenue_events', 'cost_events', 'experiments', 'channel_economics']) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v7.push(table);
+    }
+
+    const { error: readoutError } = await db().rpc('readout_experimento', {
+      p_id: '00000000-0000-0000-0000-000000000000',
+      p_actual: 1,
+      p_sample: 1,
+    });
+    if (!readoutError) v7.push('el readout acepta un experimento inexistente');
+    else if (!/no existe/i.test(readoutError.message)) v7.push('rpc:readout_experimento');
+
+    checks.push({
+      name: 'db:v7',
+      ok: v7.length === 0,
+      detail:
+        v7.length === 0
+          ? 'el P&G por canal responde y el readout aplica la regla declarada'
+          : `problemas: ${v7.join(', ')}`,
+      fix: v7.length === 0 ? undefined : 'correr 0009_cro.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()

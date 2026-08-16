@@ -8,6 +8,71 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.3.0] — 2026-08-16 · P4 · El President como CRO
+
+Cuarta de las seis partes. El President ya sabía proponer (P1) dentro de una
+correa (P2) y discutirlo a la vista (P3); ahora sabe cuánto entró, cuánto salió
+y en qué se fue — y **por fin alguien mide** las predicciones que P1 venía
+registrando.
+
+### Agregado
+
+- **P&G por canal.** `revenue_events`, `cost_events` y la vista
+  `channel_economics` con ingreso, costo, margen, clientes, **CAC y ROAS** por
+  mes. Reembolsos y churn restan; el CAC es `null` y no cero cuando no hubo
+  clientes. Ver [ADR 0020](adr/0020-pre-registro-y-economia-por-canal.md).
+
+- **El costo de pensar entra al P&G.** `importar_costos_de_agentes()` trae el
+  costo de agente de P1 como gasto `agent_compute`, todas las noches e
+  idempotente. Sin eso el P&G miente por omisión.
+
+- **Motor de experimentos con pre-registro obligatorio.** Hipótesis, métrica,
+  efecto esperado, regla de decisión, muestra mínima y guardrail se declaran
+  **antes**, y un trigger impide cambiarlos una vez que el experimento arrancó.
+  La regla es un objeto (`{comparador, umbral}`), no una frase: una regla que no
+  se aplica literalmente no es un pre-registro, es una intención.
+
+- **El readout cierra el ciclo de P1.** Aplica la regla, respeta el guardrail
+  —que le gana a la métrica principal—, exige la muestra declarada, y escribe el
+  `outcome` de la decisión asociada vía `cerrar_decision()`. De ahí sale la
+  calibración y de ahí el destilador saca lecciones.
+
+- **Pronóstico de tres escenarios** con banda de variación semanal acotada y
+  probabilidades que son la lectura estándar de una banda P85/P50/P15 — no una
+  simulación disfrazada.
+
+- **Propuesta de reasignación de presupuesto** que toca P1, P2 y P3 a la vez:
+  registra decisión con predicción, pasa por `budget.shift` (techo **L2**:
+  prepara, no ejecuta) y abre deliberación con las dos posiciones. Mueve como
+  máximo el 20%, del peor canal al mejor, y solo con evidencia en los dos.
+
+- **El libro de resultados** (`/consola/[orgId]/libro`) con seis secciones y la
+  columna que ningún competidor muestra: **qué predijo cada agente, qué pasó y
+  qué tan lejos estuvo**. CSV por `/api/libro/[orgId]`; PDF por el diálogo de
+  impresión. Los dos leen el mismo objeto, así que traen los mismos números por
+  construcción.
+
+- **`/api/cron/mes`** (día 1, 8 a.m. Bogotá): importa costos, guarda el
+  pronóstico y propone la reasignación.
+
+- **`node scripts/test-cro.mjs`** — 26 chequeos con los cuatro criterios de P4,
+  incluido el caso que rompe un join ingenuo (10 ingresos × 8 gastos).
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0009_cro.sql`.** Idempotente.
+2. Verificar `db:v7` en `GET /api/health?key=$CRON_SECRET`. Ese chequeo pide el
+   readout de un experimento inexistente y exige error de dominio.
+3. El cron `/api/cron/mes` se registra con el deploy. Ya son cinco crons; sigue
+   dentro de lo que permite el plan Pro.
+4. **Los ingresos hay que cargarlos.** `revenue_events` acepta `source` de
+   Stripe, Wompi o HubSpot con `external_ref` idempotente, pero el conector es
+   de P6: hoy entran a mano o por el checkout propio. Sin ingresos, el P&G
+   muestra solo costos y el pronóstico sale en cero — que es correcto, no un
+   error.
+
+---
+
 ## [3.2.0] — 2026-08-16 · P3 · La Sala
 
 Tercera de las seis partes, y la primera con pantallas. P1 y P2 eran invisibles;

@@ -35,6 +35,7 @@ const NAV = [
   { segment: 'activos', label: 'Activos' },
   { segment: 'agentes', label: 'Agentes' },
   { segment: 'observabilidad', label: 'Números' },
+  { segment: 'libro', label: 'Libro' },
 ];
 
 export default async function ConsolaLayout({

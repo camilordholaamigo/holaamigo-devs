@@ -1,6 +1,7 @@
 import { db } from '@/lib/supabase/admin';
 import { backfillEmbeddings } from '@/lib/learning/lessons';
 import { imputarCostos } from '@/lib/decisions/record';
+import { importarCostosDeAgentes } from '@/lib/finance/economics';
 
 /**
  * El destilador: de decisiones medidas a reglas.
@@ -109,6 +110,10 @@ export async function destilarTodo(): Promise<{
   // contabilidad de P4 lo va a leer), después se purgan las trazas viejas. Al
   // revés, se borrarían las trazas que sostienen el costo que no se imputó.
   const costos = await imputarCostos();
+
+  // Y el costo de pensar entra al P&G todas las noches, no una vez al mes: un
+  // margen que solo cuadra el día 1 no sirve para decidir el día 15.
+  for (const org of orgs) await importarCostosDeAgentes(org);
 
   let purgadas = 0;
   const { data, error } = await db().rpc('purgar_trazas', { p_dias: 90 });
