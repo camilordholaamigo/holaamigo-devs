@@ -12,7 +12,7 @@
 | **P2 · Gobierno** | ✅ entregada — 2026-08-15 | [wiki/16](../wiki/16-gobierno-capacidades-y-sobres.md) · [ADR 0018](../adr/0018-la-escalera-de-capacidades.md) · `0007_gobierno.sql` |
 | **P3 · La Sala** | ✅ entregada — 2026-08-16 | [wiki/17](../wiki/17-la-sala-el-feed-y-el-capitulo.md) · [ADR 0019](../adr/0019-la-deliberacion-como-objeto.md) · `0008_la_sala.sql` |
 | **P4 · Presidente/CRO** | ✅ entregada — 2026-08-16 | [wiki/18](../wiki/18-el-president-como-cro.md) · [ADR 0020](../adr/0020-pre-registro-y-economia-por-canal.md) · `0009_cro.sql` |
-| **P5 · CMO expandida** | pendiente | |
+| **P5 · CMO expandida** | ✅ entregada — 2026-08-16 | [wiki/19](../wiki/19-la-cmo-expandida.md) · [ADR 0021](../adr/0021-la-cmo-expandida.md) · `0010_cmo.sql` |
 | **P6 · Integraciones y CRM** | pendiente | |
 
 ---

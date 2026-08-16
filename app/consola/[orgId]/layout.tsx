@@ -30,6 +30,7 @@ const NAV = [
   // propuesta no la aprueba, y la respuesta está a un clic de distancia.
   { segment: 'sala', label: 'La Sala' },
   { segment: 'campanas', label: 'Campañas' },
+  { segment: 'marca', label: 'Marca' },
   { segment: 'bandeja', label: 'Bandeja' },
   { segment: 'agenda', label: 'Agenda' },
   { segment: 'activos', label: 'Activos' },

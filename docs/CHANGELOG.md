@@ -8,6 +8,71 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.4.0] — 2026-08-16 · P5 · La CMO expandida
+
+Quinta de las seis partes. Seis funciones que hoy nadie hace porque no da el
+tiempo, y una disciplina que es la parte importante.
+
+### Agregado
+
+- **Posicionamiento vivo y medible.** Versionado, con dos listas —lo que la
+  marca dice y lo que **nunca** dice— y `holaamigo.deriva_de_copy()` que compara
+  el copy que está saliendo contra el documento vigente.
+  Ver [ADR 0021](adr/0021-la-cmo-expandida.md).
+
+- **Inteligencia competitiva semanal.** Snapshot con hash por competidor y
+  sección (precios, oferta, **vacantes**, home). Solo alerta lo que cambió; la
+  primera captura nunca alerta. El modelo explica por qué importa citando el
+  antes y el después, y su segunda frase dice qué **no** hay que hacer.
+
+- **La fábrica de ángulos, y la columna que le faltaba.** `angles.sent` y
+  `angles.replied` existían desde `0001` y nunca se escribieron: ningún mensaje
+  guardaba de qué ángulo salía. Ahora `messages.angle_id` lo estampa —solo si la
+  campaña prueba **un** ángulo— y `holaamigo.saturacion_de_angulos()` compara dos
+  ventanas de 14 días con muestra mínima.
+
+- **Prueba social industrializada.** Detecta deals grandes (umbral relativo al
+  ticket promedio), redacta el caso con los números del CRM y pide lo único que
+  no podemos hacer nosotros: permiso del cliente final. Dos candados en la base:
+  un caso por deal, y nada publicado sin aprobación.
+
+- **Media play.** Detecta el activo de data propietaria y deja el brief listo —
+  no la publicación. Disparo manual a propósito (§13.3).
+
+- **La máquina de upsell, con escalera.** `detected → proposed_internal →
+  proposed_client`, y el salto al cliente exige firma humana nuestra por `check`
+  constraint. Cinco reglas de detección, cada una sostenida con dos números.
+
+- **Pantallas:** `/consola/[orgId]/marca` para el cliente y `/admin/senales`
+  para nosotros. Que estén separadas es la decisión del ADR hecha interfaz.
+
+- **`/api/cron/cmo`** — diario (casos y ángulos), con rama semanal los lunes
+  (competencia y señales). `?semanal=1` fuerza la parte semanal.
+
+- **`node scripts/test-cmo.mjs`** — 24 chequeos con los cuatro criterios de P5.
+
+### Cambiado
+
+- La comparación de diferenciadores pasó de literal a **por raíz de palabra**.
+  Con comparación literal, "te respondemos en 60 segundos" marcaba deriva contra
+  "responde en 60 segundos" — y a la tercera falsa alarma nadie vuelve a mirar
+  la alerta. Lo encontró la prueba en la primera corrida.
+- `campaigns.angle_ids` ahora se llena al proponer, con un solo ángulo o
+  ninguno. Nunca dos: una tasa de respuesta repartida a ojo es peor que ninguna.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0010_cmo.sql`.** Idempotente.
+2. Verificar `db:v8` en `GET /api/health?key=$CRON_SECRET`.
+3. **Escribir el posicionamiento de cada cliente activo.** Sin él, la deriva no
+   se puede medir (la función devuelve `sin_posicionamiento: true` y la pantalla
+   de Marca lo dice). Se escribe con `writePositioning()` desde un script o
+   desde el SQL Editor; la UI de edición no está y se anota en la wiki.
+4. Las alertas de competencia arrancan **la segunda semana**: la primera
+   corrida guarda la línea base sin alertar.
+
+---
+
 ## [3.3.0] — 2026-08-16 · P4 · El President como CRO
 
 Cuarta de las seis partes. El President ya sabía proponer (P1) dentro de una

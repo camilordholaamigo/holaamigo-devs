@@ -455,3 +455,34 @@ export const ChapterSchema = z.object({
     .describe('Lo que hace falta del humano hoy, en frases cortas. Vacío si no hace falta nada.'),
 });
 export type Chapter = z.infer<typeof ChapterSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// LA CMO EXPANDIDA (P5)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Un ángulo nuevo, cuando el anterior se quemó. */
+export const NewAngleSchema = z.object({
+  name: z.string().describe('Cinco palabras o menos. Es la etiqueta interna, no el asunto.'),
+  hypothesis: z.string().describe('Qué creemos que le duele a este segmento y por qué este mensaje pega.'),
+  target_segment: z.string(),
+  opener: z.string().describe('Primer mensaje real: máximo 40 palabras, sin promesas de precio.'),
+  por_que_distinto: z.string().describe('En qué se diferencia del ángulo que se quemó. Si no es distinto, no sirve.'),
+});
+export type NewAngle = z.infer<typeof NewAngleSchema>;
+
+/** El borrador de un caso de estudio. Los números NO salen de acá. */
+export const CaseStudyDraftSchema = z.object({
+  titulo: z.string(),
+  situacion: z.string().describe('Qué pasaba antes, en dos frases.'),
+  que_hicimos: z.string(),
+  resultado: z.string().describe('Usa SOLO las cifras del input. Ninguna otra.'),
+  cita_sugerida: z.string().describe('Lo que el cliente podría decir. Va a pedirse su aprobación textual.'),
+});
+export type CaseStudyDraft = z.infer<typeof CaseStudyDraftSchema>;
+
+/** Por qué importa un cambio en el sitio de un competidor. */
+export const CompetitorImpactSchema = z.object({
+  why_it_matters: z.string().describe('Dos frases. Qué significa para ESTE cliente y qué NO hay que hacer.'),
+  severity: z.enum(['low', 'normal', 'high']),
+});
+export type CompetitorImpact = z.infer<typeof CompetitorImpactSchema>;

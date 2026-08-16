@@ -132,6 +132,12 @@ export async function proposeCampaigns(organizationId: string): Promise<Proposed
           hypothesis: copy?.hypothesis ?? playbook.why_this_segment,
           segment_name: segmentLabel(playbook),
           segment_rules: playbook.segment,
+          // El ángulo que esta campaña prueba (P5). Se ata uno solo y a
+          // propósito: con dos, la tasa de respuesta de cada uno sería una
+          // repartija inventada y la fábrica de ángulos aprendería mal. Si no
+          // hay un ángulo aprobado para este segmento, la campaña corre sin
+          // atribución y se dice en la wiki.
+          angle_ids: (await angleForSegment(organizationId, playbook)) ?? [],
           sequence,
           asset_id: asset?.id ?? null,
           audience_size: audience.total,
@@ -289,4 +295,38 @@ function fallbackBody(playbook: Playbook, index: number, company: string): strin
     '',
     '¿Te sirve que lo veamos esta semana?',
   ].join('\n');
+}
+
+/**
+ * El ángulo aprobado que le corresponde a este segmento (P5).
+ *
+ * Devuelve un arreglo de uno o `null`, nunca de dos. Con dos ángulos en la
+ * misma campaña no se puede saber cuál produjo la respuesta, y la fábrica de
+ * ángulos —que retira los que se queman— tomaría esa decisión sobre datos
+ * repartidos a ojo. Mejor una campaña sin atribución que una con atribución
+ * falsa: la primera se ve como un hueco, la segunda se ve como un dato.
+ */
+async function angleForSegment(
+  organizationId: string,
+  playbook: Playbook,
+): Promise<string[] | null> {
+  const { data } = await db()
+    .from('angles')
+    .select('id, target_segment')
+    .eq('organization_id', organizationId)
+    .eq('status', 'approved')
+    .limit(20);
+
+  const aprobados = data ?? [];
+  if (aprobados.length === 0) return null;
+
+  const clave = playbook.name.toLowerCase();
+  const delSegmento = aprobados.filter((a) => {
+    const palabras: string[] = String(a.target_segment ?? '').toLowerCase().split(/[\s,]+/);
+    return palabras.some((palabra) => palabra.length > 3 && clave.includes(palabra));
+  });
+
+  if (delSegmento.length === 1) return [delSegmento[0].id as string];
+  if (aprobados.length === 1) return [aprobados[0].id as string];
+  return null;
 }

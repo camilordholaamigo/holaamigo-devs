@@ -138,6 +138,15 @@ export async function activateCampaign(args: {
   const startsAt = campaign.scheduled_for ? new Date(campaign.scheduled_for) : new Date();
   const rows: Record<string, unknown>[] = [];
 
+  // De qué ángulo sale cada mensaje (P5).
+  //
+  // Se estampa SOLO si la campaña prueba exactamente un ángulo. Con dos o más,
+  // la atribución sería una repartija inventada, y una tasa de respuesta
+  // atribuida a medias es peor que ninguna: la fábrica de ángulos retiraría el
+  // que funciona por culpa del que no.
+  const angleIds = (campaign.angle_ids ?? []) as string[];
+  const angleId = angleIds.length === 1 ? angleIds[0] : null;
+
   sequence.forEach((step, stepIndex) => {
     audience.leads.forEach((lead, leadIndex) => {
       const when = new Date(
@@ -149,6 +158,7 @@ export async function activateCampaign(args: {
         organization_id: campaign.organization_id,
         campaign_id: campaign.id,
         lead_id: lead.id,
+        angle_id: angleId,
         channel: 'email',
         direction: 'out',
         status: 'scheduled',

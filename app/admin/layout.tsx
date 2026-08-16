@@ -19,6 +19,10 @@ export const metadata = { robots: { index: false, follow: false } };
 const NAV = [
   { href: '/admin/prospects', label: 'Prospectos' },
   { href: '/admin/approvals', label: 'Cola' },
+  // Las señales de upsell viven acá y NO en la consola del cliente. Esa
+  // separación es la disciplina de P5: la CMO detecta, nosotros decidimos qué
+  // se le ofrece. Ver docs/adr/0021-la-cmo-expandida.md
+  { href: '/admin/senales', label: 'Señales' },
   { href: '/admin/agents', label: 'Agentes' },
   { href: '/admin/runs', label: 'Corridas' },
   { href: '/admin/modelos', label: 'Modelos' },

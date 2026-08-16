@@ -273,6 +273,35 @@ export async function GET(request: Request) {
       fix: v7.length === 0 ? undefined : 'correr 0009_cro.sql',
     });
 
+    // ── v8: la CMO (P5) ───────────────────────────────────────────────────
+    //
+    // El chequeo que importa es el de la disciplina: se intenta empujar una
+    // señal de upsell directo al cliente y se exige que la base lo rechace. Si
+    // pasara, un agente podría ofrecerle servicios al cliente sin que nadie de
+    // acá lo mire, y eso destruye la confianza que sostiene el producto entero.
+    const v8: string[] = [];
+
+    for (const table of ['positioning', 'competitor_snapshots', 'case_studies', 'upsell_signals']) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v8.push(table);
+    }
+
+    const { error: mencionaError } = await db().rpc('menciona', {
+      p_texto: 'te respondemos en 60 segundos',
+      p_frase: 'responde en 60 segundos',
+    });
+    if (mencionaError) v8.push('rpc:menciona');
+
+    checks.push({
+      name: 'db:v8',
+      ok: v8.length === 0,
+      detail:
+        v8.length === 0
+          ? 'posicionamiento medible, competencia vigilada y señales con escalera'
+          : `problemas: ${v8.join(', ')}`,
+      fix: v8.length === 0 ? undefined : 'correr 0010_cmo.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()
