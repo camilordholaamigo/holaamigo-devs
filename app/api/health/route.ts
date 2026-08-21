@@ -336,6 +336,57 @@ export async function GET(request: Request) {
       fix: v9.length === 0 ? undefined : 'correr 0011_integraciones.sql',
     });
 
+    // ── v10: el agente de agendamiento (P7) ───────────────────────────────
+    //
+    // Lo que se comprueba no es solo que las tablas existan: también que
+    // `techo_de_plan` sea la versión de dos argumentos. Es la diferencia entre
+    // "las migraciones corrieron" y "un cliente del plan gratis puede compilar
+    // su guion sin generar una tarjeta de aprobación" — y desde afuera las dos
+    // cosas se ven idénticas hasta que un cliente lo intenta.
+    const v10: string[] = [];
+
+    for (const table of ['agent_playbooks', 'knowledge_bases', 'conversations', 'conversation_turns']) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v10.push(table);
+    }
+
+    const { error: playbookRpcError } = await db().rpc('playbook_vigente', {
+      p_org: '00000000-0000-0000-0000-000000000000',
+    });
+    if (playbookRpcError) v10.push('rpc:playbook_vigente');
+
+    const { data: techo, error: techoError } = await db().rpc('techo_de_plan', {
+      p_plan: 'diagnostico',
+      p_risk_class: 'write',
+    });
+    if (techoError) v10.push('techo_de_plan sigue siendo el de un argumento');
+    else if (Number(techo) !== 5) {
+      v10.push(`el plan gratis topa en L${techo} lo que el agente escribe en objetos propios`);
+    }
+
+    const { data: embudo, error: embudoError } = await db().rpc('embudo_inicial', {
+      p_desde: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+    });
+    if (embudoError) v10.push('rpc:embudo_inicial (falta 0012)');
+    else if ((embudo as unknown[])?.length !== 8) {
+      v10.push(`embudo_inicial devuelve ${(embudo as unknown[])?.length} etapas, no 8`);
+    }
+
+    for (const capability of ['playbook.compile', 'knowledge.index', 'setter.simulate', 'meeting.offer_slots']) {
+      const { data } = await db().from('capabilities').select('id').eq('id', capability).maybeSingle();
+      if (!data) v10.push(`capacidad ${capability} sin sembrar`);
+    }
+
+    checks.push({
+      name: 'db:v10',
+      ok: v10.length === 0,
+      detail:
+        v10.length === 0
+          ? 'el agente de agendamiento se puede compilar, y el plan gratis no lo frena'
+          : `problemas: ${v10.join(', ')}`,
+      fix: v10.length === 0 ? undefined : 'correr 0012_flujo_inicial.sql y 0013_agente_de_agendamiento.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()

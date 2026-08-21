@@ -113,7 +113,17 @@ Ver [ADR 0024](adr/0024-el-agente-se-compila-del-diagnostico.md) y
    habilidades; y **redefine `techo_de_plan`, `autorizar`, `habilidades_activas`
    y `embudo_inicial`**. Es idempotente.
 
-2. **Verificar que quedó aplicada:**
+2. **Verificar desde `/api/health`.** Se agregó el chequeo `db:v10`, que no solo
+   mira que las tablas existan: comprueba que `techo_de_plan` sea la versión de
+   dos argumentos y que `embudo_inicial` devuelva ocho etapas. Desde afuera,
+   "las migraciones corrieron" y "el cliente puede compilar su guion sin generar
+   una tarjeta" se ven idénticas hasta que un cliente lo intenta.
+
+   > **Ojo:** al momento de escribir esto, producción también tenía pendiente
+   > `0011_integraciones.sql` (P6) — `db:v9` en rojo. El orden es 0011 → 0012 →
+   > 0013.
+
+3. **O a mano, en el SQL Editor:**
 
    ```sql
    select holaamigo.techo_de_plan('diagnostico', 'write');  -- 5
@@ -122,7 +132,7 @@ Ver [ADR 0024](adr/0024-el-agente-se-compila-del-diagnostico.md) y
    select count(*) from holaamigo.embudo_inicial();  -- 8
    ```
 
-3. **Variables de entorno.** Ninguna nueva es obligatoria. Para que el agente
+4. **Variables de entorno.** Ninguna nueva es obligatoria. Para que el agente
    **envíe** por WhatsApp (además de razonar) hacen falta, cuando el número esté
    aprobado por Meta:
 
@@ -134,11 +144,11 @@ Ver [ADR 0024](adr/0024-el-agente-se-compila-del-diagnostico.md) y
    Sin ellas el turno se calcula igual y el mensaje queda en `messages` con
    estado `queued` y el motivo escrito. No es un fallo silencioso.
 
-4. **Opcional, por modelo:** `MODEL_PLAYBOOK` y `MODEL_SETTER`. Por defecto
+5. **Opcional, por modelo:** `MODEL_PLAYBOOK` y `MODEL_SETTER`. Por defecto
    `gpt-5-mini`. El playbook se compila una vez por cliente y gobierna meses de
    conversaciones: es el paso donde subir el modelo se paga solo.
 
-5. **Nada que hacer con los clientes existentes.** Un cliente sin playbook sigue
+6. **Nada que hacer con los clientes existentes.** Un cliente sin playbook sigue
    funcionando por el camino de v1. El agente se compila la primera vez que
    entra a `/agente/[orgId]` o elige WhatsApp en `/conectar`.
 
