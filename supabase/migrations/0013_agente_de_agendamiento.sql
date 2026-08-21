@@ -33,6 +33,42 @@
 -- Idempotente. Se puede correr dos veces.
 -- ═══════════════════════════════════════════════════════════════════════════
 
+-- ═══════════════ 0 · LO QUE TIENE QUE ESTAR ANTES ═══════════════
+--
+-- Esta migración depende de `0007_gobierno.sql` (el catálogo de capacidades) y
+-- de `0011_integraciones.sql` (el catálogo de habilidades y
+-- `habilidades_activas`). Sin ellas siembra sobre tablas que no existen.
+--
+-- El bloque existe porque el fallo natural es pésimo: sin `0011`, esto revienta
+-- 500 líneas más abajo con `42P01: relation "holaamigo.skills" does not exist`,
+-- después de haber creado media docena de tablas. El error no dice qué correr,
+-- y el que lo lee tiene que ir a buscar en qué archivo vive esa tabla.
+--
+-- Falla acá, antes de tocar nada, y dice exactamente qué hacer.
+
+do $$
+declare
+  v_faltan text[] := '{}';
+begin
+  if to_regclass('holaamigo.capabilities') is null then
+    v_faltan := v_faltan || '0007_gobierno.sql (capabilities)'::text;
+  end if;
+  if to_regclass('holaamigo.skills') is null then
+    v_faltan := v_faltan || '0011_integraciones.sql (skills, skill_grants)'::text;
+  end if;
+
+  if array_length(v_faltan, 1) > 0 then
+    raise exception
+      E'0013 no se puede aplicar todavía: falta correr % antes.
+
+'
+      'El orden es 0011_integraciones.sql → 0012_flujo_inicial.sql → 0013_agente_de_agendamiento.sql.
+'
+      'Las tres son idempotentes: si alguna ya corrió, correrla de nuevo no hace daño.',
+      array_to_string(v_faltan, ' y ');
+  end if;
+end $$;
+
 -- ═══════════════ 1 · EL PLAYBOOK ═══════════════
 --
 -- `vertical` existe desde el día uno aunque hoy solo valga una cosa. El primer

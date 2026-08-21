@@ -107,11 +107,23 @@ Ver [ADR 0024](adr/0024-el-agente-se-compila-del-diagnostico.md) y
 
 ### Para desplegar
 
-1. **Correr `supabase/migrations/0013_agente_de_agendamiento.sql`** en el SQL
-   Editor de Supabase. Crea `agent_playbooks`, `knowledge_bases`,
-   `conversations` y `conversation_turns`; siembra cuatro capacidades y cuatro
-   habilidades; y **redefine `techo_de_plan`, `autorizar`, `habilidades_activas`
-   y `embudo_inicial`**. Es idempotente.
+1. **Correr las migraciones EN ORDEN** en el SQL Editor de Supabase:
+
+   ```
+   0011_integraciones.sql  →  0012_flujo_inicial.sql  →  0013_agente_de_agendamiento.sql
+   ```
+
+   `0013` crea `agent_playbooks`, `knowledge_bases`, `conversations` y
+   `conversation_turns`; siembra cuatro capacidades y cuatro habilidades; y
+   **redefine `techo_de_plan`, `autorizar`, `habilidades_activas` y
+   `embudo_inicial`**. Las tres son idempotentes: correr una dos veces no hace
+   daño.
+
+   El orden importa de verdad: `0013` siembra las habilidades del setter en
+   `holaamigo.skills`, que la crea `0011`. Si falta, `0013` **se detiene antes de
+   tocar nada** y dice qué archivo correr — no revienta 500 líneas adentro con un
+   `42P01` que no explica nada. Ese guardia está cubierto por
+   `scripts/test-orden-migraciones.mjs`.
 
 2. **Verificar desde `/api/health`.** Se agregó el chequeo `db:v10`, que no solo
    mira que las tablas existan: comprueba que `techo_de_plan` sea la versión de
