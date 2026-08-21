@@ -148,6 +148,100 @@ humano (§13.3).
 
 ---
 
+### `POST /api/agent/build`
+
+Compila el playbook del agente de agendamiento y construye su base de
+conocimiento. **Devuelve un stream NDJSON**, no un JSON: una línea por fase que
+terminó de verdad en el servidor. Ver [ADR 0024](../adr/0024-el-agente-se-compila-del-diagnostico.md).
+
+Si ya hay un playbook vigente y no viene `force`, responde JSON normal con el
+que hay. El botón se puede apretar dos veces.
+
+```jsonc
+// petición
+{
+  "organizationId": "uuid",
+  "sessionId": "uuid",     // opcional; si falta se usa la última sesión
+  "force": false           // true = recompilar y crear versión nueva
+}
+
+// 200 · application/x-ndjson — una línea por fase
+{"fase":"contexto","estado":"corriendo","detalle":"Leyendo tu diagnóstico…"}
+{"fase":"lenguaje","estado":"corriendo","detalle":"Escribiendo el guion…"}
+{"fase":"playbook","estado":"listo","detalle":"Guion listo · 78% sale de tu sitio","datos":{...}}
+{"fase":"conocimiento","estado":"listo","detalle":"11 documentos indexados","datos":{...}}
+{"fase":"fin","estado":"listo","detalle":"Tu agente está listo.","datos":{"next":"/agente/<orgId>"}}
+
+// 200 · application/json — ya existía
+{ "ok": true, "reused": true, "playbookId": "uuid", "version": 2, "cobertura": {...} }
+```
+
+El cliente distingue los dos casos por el `content-type`. Un fallo llega como
+`{"fase":"fin","estado":"falló","detalle":"…"}` dentro del stream, no como un
+código HTTP: para cuando algo se rompe, la respuesta ya empezó.
+
+| Código | Cuándo |
+|---|---|
+| 400 | `organizationId` no es un uuid |
+| 404 | la organización no existe |
+
+### `POST /api/agent/chat`
+
+Un turno del simulador. Corre por el mismo runtime que las conversaciones
+reales; solo se apagan las escrituras hacia afuera.
+
+```jsonc
+// petición
+{
+  "organizationId": "uuid",
+  "conversationId": "uuid",   // null en el primer turno
+  "mensaje": "¿cuánto cuesta?",
+  "abrir": false              // true = que el agente abra él, como en frío
+}
+
+// 200
+{
+  "ok": true,
+  "conversationId": "uuid",
+  "mensaje": "Depende del alcance…",
+  "stage": "objecion",
+  "status": "open",
+  "intencion": "ask_price",
+  "qualification": { "dolor": "no dan abasto contestando" },
+  "herramientas": [{ "name": "consultar_horarios", "ok": true }],
+  "costUsd": 0.0021
+}
+```
+
+| Código | Cuándo |
+|---|---|
+| 400 | datos inválidos, o mensaje vacío sin `abrir` |
+| 404 | la conversación no existe, o es de otra organización |
+| 409 | la organización todavía no tiene playbook |
+| 429 | más de 40 turnos por hora desde la misma IP |
+
+`GET /api/agent/chat?conversationId=…&organizationId=…` devuelve la
+transcripción, para recargar sin perder el hilo.
+
+### `GET|PATCH /api/agent/playbook`
+
+`GET ?organizationId=…` devuelve el playbook vigente, **la instrucción textual
+que el modelo lee en cada turno** y las últimas cinco versiones.
+
+`PATCH` confirma o corrige un campo inferido. No versiona: confirmar un dato no
+es un guion distinto. Lo que cambia es `source`, que pasa a `editado`.
+
+```jsonc
+// petición
+{ "organizationId": "uuid", "ruta": "agendamiento.quien_atiende", "valor": "Camila" }
+
+// 200 — la cobertura recalculada, para que la barra suba en el acto
+{ "ok": true, "cobertura": { "porcentaje": 84, "a_confirmar": [...] } }
+```
+
+Solo se pueden editar rutas dentro de `oferta`, `agendamiento`, `calificacion`,
+`objeciones`, `faq`, `tono` y `guion`. Cualquier otra devuelve 400.
+
 ### `POST /api/leads/upload`
 
 `multipart/form-data`. Dos modos sobre la misma ruta.
@@ -258,15 +352,20 @@ abandonadas. Protegida con `Authorization: Bearer $CRON_SECRET`.
 
 ### `GET|POST /api/webhooks/whatsapp`
 
-`GET` = verificación de Meta (`hub.challenge`).
-`POST` = eventos, con **firma HMAC verificada** (`x-hub-signature-256` contra
-`WHATSAPP_APP_SECRET`). En producción, sin secreto configurado se rechaza.
+`GET` responde el `hub.challenge` de la verificación de Meta.
 
-Guarda el mensaje entrante, lo clasifica con SALES, y según el resultado
-suprime al contacto (`opt_out`) o escala a la cola.
+`POST` recibe eventos. Verifica la firma `x-hub-signature-256` y **toma uno de
+dos caminos según si la organización tiene playbook**:
 
-Devuelve 200 incluso ante error de procesamiento, para no entrar en bucle de
-reintentos de Meta.
+- **Con playbook** (P7): el agente de agendamiento contesta y el mensaje sale
+  por la Cloud API. Sin `WHATSAPP_TOKEN` / `WHATSAPP_PHONE_NUMBER_ID` la fila
+  queda en `messages` con estado `queued` y el motivo escrito.
+- **Sin playbook**: el camino de v1 — clasificar, suprimir si pidió salir,
+  escalar si toca, y no contestar.
+
+Un lead con `status = 'suppressed'` no recibe respuesta automática aunque
+escriba: su mensaje se guarda y lo ve un humano. Devuelve siempre 200 salvo
+firma inválida (401), para no entrar en el bucle de reintentos de Meta.
 
 ### `POST /api/webhooks/email`
 

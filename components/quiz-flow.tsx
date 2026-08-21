@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ResearchTicker } from '@/components/research-ticker';
 import type { QuizQuestion } from '@/lib/quiz/bank';
+import type { QuizPreview } from '@/lib/quiz/preview';
+import { toCurrency } from '@/config/assumptions';
+import { formatMoney, formatNumber } from '@/lib/utils';
 
 /**
  * El quiz (PRD §4.2).
@@ -24,15 +27,19 @@ interface NextResponse {
   done: boolean;
   runId?: string | null;
   organizationId?: string;
+  /** Llega una sola vez, en la respuesta que la desbloquea. */
+  preview?: QuizPreview | null;
 }
 
 export function QuizFlow({
   sessionId,
   domain,
+  currency,
   initialRunId,
 }: {
   sessionId: string;
   domain: string;
+  currency: string;
   initialRunId: string | null;
 }) {
   const router = useRouter();
@@ -67,10 +74,21 @@ export function QuizFlow({
   // Borrador local de la respuesta en curso (texto, número, multi).
   const [draft, setDraft] = useState<string | string[]>('');
 
+  /**
+   * La primera cifra, apenas el servidor la puede calcular (§4.2).
+   *
+   * Se queda en pantalla el resto del quiz y no se limpia nunca. Aparecer una
+   * vez y desaparecer la convertiría en una notificación; quedarse la convierte
+   * en un marcador: el cliente responde las seis preguntas que faltan con su
+   * propio número mirándolo. Ese es todo el punto.
+   */
+  const [preview, setPreview] = useState<QuizPreview | null>(null);
+
   /** Punto único donde entra una respuesta del servidor. */
   const applyState = useCallback((data: NextResponse) => {
     setState(data);
     if (data.runId) setRunId(data.runId);
+    if (data.preview) setPreview(data.preview);
     setDraft(data.question?.input_type === 'multi' ? [] : '');
     const pct = Math.min(100, Math.round((data.answeredCount / Math.max(1, data.total)) * 100));
     setProgress((previous) => Math.max(previous, pct));
@@ -188,7 +206,7 @@ export function QuizFlow({
   }
 
   if (generating || state?.done) {
-    return <Assembling domain={domain} runId={runId} />;
+    return <Assembling domain={domain} runId={runId} currency={currency} preview={preview} />;
   }
 
   if (!state?.question) {
@@ -216,6 +234,8 @@ export function QuizFlow({
           <div className="progress-fill h-full rounded-full" style={{ width: `${progress}%` }} />
         </div>
       </div>
+
+      {preview ? <PreviewCard preview={preview} currency={currency} /> : null}
 
       <div key={question.id} className="slide-in mt-10 space-y-6">
         <div className="space-y-2">
@@ -371,45 +391,131 @@ function Continue({ disabled, onClick }: { disabled: boolean; onClick: () => voi
   );
 }
 
-/** Pantalla de ensamblaje. El President está trabajando y hay que decirlo. */
-function Assembling({ domain, runId }: { domain: string; runId: string | null }) {
-  const [step, setStep] = useState(0);
-  const lines = [
-    'Cruzando tus respuestas con lo que leímos de tu sitio',
-    'Ubicándote frente a tus competidores',
-    'Calculando dónde se te está cayendo la plata',
-    'Armando la cuenta al revés desde tu meta',
-    'Instanciando President, CMO y Sales',
-  ];
+/**
+ * El adelanto de la primera fuga, a mitad del quiz.
+ *
+ * El monto lo calculó el servidor con `computeLeaks` — el mismo que va a
+ * producir el diagnóstico. Acá solo se convierte a la moneda local y se pinta.
+ * La fórmula va visible desde el primer momento por la misma razón que en el
+ * diagnóstico: una cifra sin su aritmética al lado se lee como una promesa de
+ * vendedor, y esta llega demasiado temprano en la relación para gastarse la
+ * confianza.
+ */
+function PreviewCard({ preview, currency }: { preview: QuizPreview; currency: string }) {
+  return (
+    <div className="slide-in mt-8 rounded-xl border border-leak/25 bg-leak-soft px-5 py-4">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-leak">
+        Con lo que llevas ya podemos calcular esto
+      </p>
+      <p className="tnum mt-1 text-3xl font-semibold tracking-tight text-leak">
+        {formatMoney(toCurrency(preview.leak_usd, currency), currency)}
+        <span className="ml-2 align-middle text-[13px] font-normal text-leak/80">al mes</span>
+      </p>
+      <p className="mt-1.5 text-[13px] leading-relaxed text-ink-soft">
+        Es lo que vale tu base dormida: {formatNumber(preview.contacts)} contactos que ya
+        levantaron la mano. Faltan las otras fugas.
+      </p>
+      <p className="tnum mt-2 font-mono text-[11.5px] leading-relaxed text-ink-faint">
+        {preview.formula}
+      </p>
+    </div>
+  );
+}
+
+/**
+ * Pantalla de ensamblaje.
+ *
+ * Antes rotaba cinco frases con un `setInterval` de 4,2 s: los puntos marchaban
+ * solos, sin relación con nada que estuviera pasando en el servidor. Es la
+ * pantalla más larga del flujo —`/api/diagnostic/generate` puede esperar 45 s
+ * al research y después llamar al modelo— y era la única que mentía, justo
+ * debajo de un ticker que sí dice la verdad.
+ *
+ * Ahora hay exactamente dos cosas vivas, y las dos son reales: el estado del
+ * research (que sí sabemos) y el cronómetro. Los cinco pasos siguen listados
+ * porque el cliente merece saber qué está corriendo, pero en presente y sin
+ * marcadores de progreso falsos: se dice qué hace el President, no se finge
+ * saber en cuál va.
+ */
+function Assembling({
+  domain,
+  runId,
+  currency,
+  preview,
+}: {
+  domain: string;
+  runId: string | null;
+  currency: string;
+  preview: QuizPreview | null;
+}) {
+  const [researchDone, setResearchDone] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+
+  // `useCallback` y no una función inline: el efecto del ticker tiene
+  // `onFinished` en sus dependencias, y una identidad nueva en cada render
+  // reabriría el EventSource en bucle.
+  const onFinished = useCallback(() => setResearchDone(true), []);
 
   useEffect(() => {
-    const timer = setInterval(() => setStep((s) => Math.min(s + 1, lines.length - 1)), 4200);
+    const timer = setInterval(() => setElapsed((s) => s + 1), 1000);
     return () => clearInterval(timer);
-  }, [lines.length]);
+  }, []);
+
+  const lines = [
+    'Cruza tus respuestas con lo que leímos de tu sitio',
+    'Te ubica frente a tus competidores',
+    'Calcula dónde se te está cayendo la plata',
+    'Arma la cuenta al revés desde tu meta',
+    'Instancia President, CMO y Sales',
+  ];
 
   return (
     <div className="mx-auto w-full max-w-xl px-6 py-16">
-      <ResearchTicker runId={runId} domain={domain} />
-      <div className="mt-12 space-y-6">
+      <ResearchTicker runId={runId} domain={domain} onFinished={onFinished} />
+
+      <div className="mt-10 space-y-6">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">
-          Estamos armando tu diagnóstico.
+          El President está armando tu diagnóstico.
         </h1>
-        <ul className="space-y-3">
-          {lines.map((line, index) => (
-            <li key={line} className="flex items-start gap-3 text-[15px]">
-              <span
-                className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${
-                  index < step ? 'bg-money' : index === step ? 'pulse-dot bg-money-bright' : 'bg-line-strong'
-                }`}
-                aria-hidden
-              />
-              <span className={index <= step ? 'text-ink' : 'text-ink-faint'}>{line}</span>
-            </li>
-          ))}
-        </ul>
-        <p className="pt-4 text-[13px] text-ink-faint">
-          Esto toma entre 30 y 90 segundos. No cierres la pestaña — igual te mandamos el enlace
-          por correo apenas esté listo.
+
+        <div className="flex items-center gap-3 rounded-xl border border-line bg-paper-sunken px-4 py-3">
+          <span className="pulse-dot h-2 w-2 shrink-0 rounded-full bg-money-bright" aria-hidden />
+          <p className="text-[13.5px] text-ink-soft">
+            {researchDone ? 'Análisis del sitio listo. Razonando' : 'Esperando el análisis de tu sitio'}
+          </p>
+          <span className="tnum ml-auto text-[12.5px] text-ink-faint" aria-live="off">
+            {elapsed}s
+          </span>
+        </div>
+
+        {preview ? (
+          <p className="text-[13.5px] leading-relaxed text-ink-soft">
+            Ya tienes{' '}
+            <span className="tnum font-semibold text-leak">
+              {formatMoney(toCurrency(preview.leak_usd, currency), currency)}
+            </span>{' '}
+            al mes en la base dormida. Faltan las otras fugas y la cuenta al revés.
+          </p>
+        ) : null}
+
+        <div className="space-y-2.5">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
+            Qué está corriendo
+          </p>
+          <ul className="space-y-2">
+            {lines.map((line) => (
+              <li key={line} className="flex items-start gap-3 text-[14px] text-ink-soft">
+                <span className="mt-2 h-1 w-1 shrink-0 rounded-full bg-line-strong" aria-hidden />
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="pt-2 text-[13px] text-ink-faint">
+          {elapsed > 90
+            ? 'Está tardando más de lo normal. No cierres la pestaña — y si la cierras, el enlace te llega por correo igual.'
+            : 'Esto toma entre 30 y 90 segundos. No cierres la pestaña — igual te mandamos el enlace por correo apenas esté listo.'}
         </p>
       </div>
     </div>

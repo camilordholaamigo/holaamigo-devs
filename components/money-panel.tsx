@@ -12,6 +12,8 @@ import { toCurrency } from '@/config/assumptions';
 import type { Assumptions } from '@/config/assumptions';
 import { formatMoney, formatNumber } from '@/lib/utils';
 import { Card, SourceMark, SectionTitle } from '@/components/ui';
+import { LeakWaterfall } from '@/components/charts/leak-waterfall';
+import { InverseFunnel } from '@/components/charts/inverse-funnel';
 
 /**
  * §7.3 Dónde se te está cayendo la plata · §7.4 La cuenta al revés.
@@ -81,6 +83,7 @@ export function MoneyPanel({
   const [openLeak, setOpenLeak] = useState<string | null>(null);
   const [touched, setTouched] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingFrom = useRef<{ key: EditableKey; from: number } | null>(null);
 
   // La evidencia de cada fuga viene del President y NO cambia cuando el
   // cliente edita un número: cambió el monto, no la razón.
@@ -108,12 +111,33 @@ export function MoneyPanel({
     const next = { ...assumptions, [key]: value };
     setAssumptions(next);
 
+    // Arrastrar un control dispara `update` docenas de veces y el debounce solo
+    // deja pasar la última. Si `from` se leyera ahí, sería el penúltimo paso
+    // del arrastre y no el punto de partida: un movimiento de 18% a 40%
+    // quedaría registrado como "subió un punto". El origen se captura en el
+    // primer disparo de la ráfaga y se suelta cuando el guardado sale.
+    if (!pendingFrom.current || pendingFrom.current.key !== key) {
+      pendingFrom.current = { key, from: assumptions[key] };
+    }
+    const origin = pendingFrom.current.from;
+
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      pendingFrom.current = null;
       void fetch('/api/diagnostic/assumptions', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ shareToken, assumptions: next, changed: key }),
+        // `from` y `to` van aparte del objeto completo porque la dirección del
+        // cambio es la señal, no el estado final. Sin el valor previo, saber
+        // que alguien tocó `close_rate` no dice si nos considera optimistas o
+        // pesimistas — y esas dos lecturas piden lo contrario del default.
+        body: JSON.stringify({
+          shareToken,
+          assumptions: next,
+          changed: key,
+          from: origin,
+          to: value,
+        }),
       }).catch(() => {
         /* el número ya se mostró; el guardado es secundario */
       });
@@ -142,6 +166,18 @@ export function MoneyPanel({
               {money(total * 12)} al año · sobre {formatNumber(assumptions.leads_per_month)} leads
               al mes y una base de {formatNumber(assumptions.dormant_contacts)} contactos
             </p>
+          </div>
+
+          {/* La cascada va antes de la lista y no después: es el mapa, y un
+              mapa después del recorrido no sirve. Se mueve en el mismo frame
+              que los controles porque `leaks` ya es el resultado del `useMemo`
+              que recalcula con cada arrastre. */}
+          <div className="border-b border-line px-6 py-7 sm:px-8">
+            <LeakWaterfall
+              leaks={leaks}
+              baselineUsd={assumptions.monthly_revenue_usd}
+              currency={currency}
+            />
           </div>
 
           <ul className="divide-y divide-line">
@@ -237,6 +273,31 @@ export function MoneyPanel({
               </p>
               <p className="pb-1 text-[15px] text-ink-soft">
                 clientes nuevos en {assumptions.weeks_available} semanas
+              </p>
+            </div>
+          </div>
+
+          {/* El embudo primero, la derivación después. La figura contesta
+              "¿cuánto hay que mover?" en dos segundos; la lista contesta "¿de
+              dónde sale ese número?" para quien quiera auditarlo. Quitar la
+              lista y dejar solo el dibujo sería romper §13.4. */}
+          <div className="border-b border-line px-6 py-7 sm:px-8">
+            <InverseFunnel
+              inverse={inverse}
+              weeks={assumptions.weeks_available}
+              bookingRate={assumptions.booking_rate}
+              closeFromMeeting={assumptions.close_from_meeting}
+            />
+            <div className="mt-6 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl bg-paper-sunken px-4 py-3.5">
+              <p className="tnum text-2xl font-semibold tracking-tight text-ink">
+                {formatNumber(inverse.contacts_per_week)}
+              </p>
+              <p className="text-[14px] text-ink-soft">
+                contactos por semana, durante {assumptions.weeks_available} semanas
+              </p>
+              <p className="tnum w-full text-[12px] text-ink-faint">
+                {formatNumber(inverse.sends_per_week)} envíos/semana ·{' '}
+                {formatNumber(inverse.mailboxes_needed)} buzones
               </p>
             </div>
           </div>

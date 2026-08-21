@@ -19,6 +19,9 @@ export const metadata = { robots: { index: false, follow: false } };
 const NAV = [
   { href: '/admin/prospects', label: 'Prospectos' },
   { href: '/admin/approvals', label: 'Cola' },
+  // El embudo va acá y no en la consola del cliente: mide nuestro producto, no
+  // el negocio de él. Ver app/admin/embudo/page.tsx
+  { href: '/admin/embudo', label: 'Embudo' },
   // Las señales de upsell viven acá y NO en la consola del cliente. Esa
   // separación es la disciplina de P5: la CMO detecta, nosotros decidimos qué
   // se le ofrece. Ver docs/adr/0021-la-cmo-expandida.md

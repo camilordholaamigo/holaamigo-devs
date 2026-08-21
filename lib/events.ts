@@ -11,6 +11,8 @@ export type PlgEvent =
   | 'landing_submit'
   | 'quiz_started'
   | 'quiz_answered'
+  /** Se le mostró la primera cifra a mitad del quiz. Ver lib/quiz/preview.ts */
+  | 'quiz_preview_shown'
   | 'quiz_completed'
   | 'quiz_abandoned'
   | 'research_started'
@@ -29,7 +31,15 @@ export type PlgEvent =
   | 'approval_decided'
   | 'band_override'
   | 'returned_48h'
-  | 'cta_clicked';
+  | 'cta_clicked'
+  /** P7 · del diagnóstico al agente. Ver docs/wiki/22-agente-de-agendamiento.md */
+  | 'playbook_compiled'
+  | 'knowledge_base_built'
+  /** El cliente habló con su agente en el simulador. Es la señal de activación
+   *  más fuerte que tenemos: quien lo prueba entiende qué compró. */
+  | 'agent_tested'
+  | 'playbook_field_confirmed'
+  | 'whatsapp_number_requested';
 
 export async function track(
   event: PlgEvent,

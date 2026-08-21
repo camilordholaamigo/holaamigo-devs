@@ -42,6 +42,12 @@ const Body = z.object({
   shareToken: z.string().min(16).max(80),
   assumptions: AssumptionsSchema,
   changed: z.string().max(60).nullish(),
+  // El valor antes y después del arrastre. `nullish` y no requerido: un cliente
+  // con la página vieja en caché sigue guardando su supuesto, solo que sin
+  // dirección. Romperle el guardado por un campo de telemetría sería cambiar
+  // una fuga de datos por una fuga de ventas.
+  from: z.number().finite().nullish(),
+  to: z.number().finite().nullish(),
 });
 
 export async function POST(request: Request) {
@@ -50,7 +56,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Supuestos inválidos' }, { status: 400 });
   }
 
-  const { shareToken, assumptions, changed } = parsed.data;
+  const { shareToken, assumptions, changed, from, to } = parsed.data;
 
   try {
     const { data: diagnostic } = await db()
@@ -89,7 +95,12 @@ export async function POST(request: Request) {
     await track('assumption_edited', {
       organizationId: diagnostic.organization_id,
       sessionId: diagnostic.session_id,
-      props: { changed: changed ?? null, assumptions },
+      props: {
+        changed: changed ?? null,
+        from: from ?? null,
+        to: to ?? null,
+        assumptions,
+      },
     });
 
     // Editar un supuesto puede empujar al prospecto a ATTACK.

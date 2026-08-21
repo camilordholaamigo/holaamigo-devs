@@ -441,3 +441,299 @@ export async function spentUsd(organizationId: string): Promise<number> {
     .eq('organization_id', organizationId);
   return (data ?? []).reduce((sum, row) => sum + Number(row.cost_usd ?? 0), 0);
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CONVERSACIÓN CON HERRAMIENTAS (P7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * El segundo modo de esta envoltura: un turno de conversación con herramientas.
+ *
+ * Va acá y no en `lib/whatsapp/` por lo que promete el encabezado de este
+ * archivo: **una sola envoltura sobre la Responses API**. Si el setter llamara
+ * a OpenAI por su cuenta, tendríamos dos lugares donde se resuelve el ruteo de
+ * modelos, dos donde se calcula el costo y dos donde se registra en
+ * `agent_runs` — y el día que agreguemos un tercer agente conversacional serían
+ * tres.
+ *
+ * Lo que cambia respecto de `runStructured`:
+ *
+ *  · `previous_response_id` en vez de reenviar el historial. Es lo que hace que
+ *    el turno 12 cueste lo mismo que el turno 2. Exige `store: true`.
+ *  · Bucle de herramientas: mientras el modelo pida funciones, se ejecutan y se
+ *    le devuelven. Con tope duro de rondas, porque un modelo que se queda
+ *    consultando horarios en círculos es un contacto esperando en WhatsApp.
+ *  · `file_search` contra el vector store del cliente, si lo tiene.
+ *
+ * Lo que NO cambia: la salida sigue siendo estructurada y validada con Zod. Un
+ * turno de WhatsApp es lo que más cerca llega a un tercero humano; es el último
+ * lugar donde aceptaríamos texto libre sin validar.
+ */
+
+export interface ToolSpec {
+  name: string;
+  description: string;
+  /** JSON Schema. En `strict` todo va requerido y sin propiedades extra. */
+  parameters: Record<string, unknown>;
+}
+
+export interface ToolInvocation {
+  name: string;
+  args: Record<string, unknown>;
+  result: unknown;
+  ok: boolean;
+  durationMs: number;
+}
+
+export interface ConversationOptions<T> {
+  step: StepName;
+  schemaName: string;
+  schema: z.ZodType<T>;
+  system: string;
+  /** El turno del contacto, ya formateado. */
+  input: string;
+  /** Continuidad. `null` en el primer turno. */
+  previousResponseId?: string | null;
+  vectorStoreIds?: string[];
+  tools?: ToolSpec[];
+  /** Ejecuta una herramienta. Puede lanzar: el error se le devuelve al modelo. */
+  onToolCall?: (name: string, args: Record<string, unknown>) => Promise<unknown>;
+  maxToolRounds?: number;
+  organizationId?: string | null;
+  agentId?: string | null;
+  role?: 'president' | 'cmo' | 'sales' | null;
+  trigger?: string;
+  runId?: string | null;
+}
+
+export interface ConversationResult<T> {
+  data: T;
+  responseId: string | null;
+  toolCalls: ToolInvocation[];
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  costUsd: number;
+  durationMs: number;
+}
+
+interface ResponsePayload {
+  id?: string;
+  output_text?: string;
+  status?: string;
+  incomplete_details?: { reason?: string };
+  usage?: { input_tokens?: number; output_tokens?: number };
+  output?: Array<{
+    type: string;
+    name?: string;
+    call_id?: string;
+    arguments?: string;
+  }>;
+}
+
+export async function runConversation<T>(
+  opts: ConversationOptions<T>,
+): Promise<ConversationResult<T>> {
+  const route = await routeFor(opts.step);
+  const startedAt = Date.now();
+  const maxRounds = opts.maxToolRounds ?? 4;
+
+  let tokensIn = 0;
+  let tokensOut = 0;
+  const toolCalls: ToolInvocation[] = [];
+  let lastError: unknown = null;
+
+  for (const model of route.models) {
+    try {
+      const params = paramsFor(model, route);
+      const drop = new Set<'temperature' | 'reasoning'>();
+
+      const tools: Record<string, unknown>[] = [];
+      if (opts.vectorStoreIds?.length) {
+        tools.push({ type: 'file_search', vector_store_ids: opts.vectorStoreIds });
+      }
+      for (const tool of opts.tools ?? []) {
+        tools.push({
+          type: 'function',
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters,
+          strict: true,
+        });
+      }
+
+      // `conHerramientas` existe para la última ronda. Si al agotar el tope el
+      // modelo sigue pidiendo funciones, se le hace la misma llamada SIN
+      // herramientas: así no le queda más opción que contestar. Sin esto, un
+      // modelo que se queda consultando horarios en círculos termina el turno
+      // con `output_text` vacío, y desde afuera eso se ve idéntico a un fallo
+      // de esquema — con un contacto esperando en WhatsApp del otro lado.
+      const base = (conHerramientas = true): Record<string, unknown> => {
+        const body: Record<string, unknown> = {
+          model,
+          instructions: opts.system,
+          max_output_tokens: route.maxOutputTokens,
+          text: { format: zodTextFormat(opts.schema, opts.schemaName) },
+          // Sin `store` no hay `previous_response_id`, y sin eso cada turno
+          // tendría que reenviar la conversación entera.
+          store: true,
+        };
+        if (params.temperature !== null && !drop.has('temperature')) {
+          body.temperature = params.temperature;
+        }
+        if (params.reasoningEffort !== null && !drop.has('reasoning')) {
+          body.reasoning = { effort: params.reasoningEffort };
+        }
+        if (conHerramientas && tools.length > 0) body.tools = tools;
+        return body;
+      };
+
+      const create = openai().responses.create.bind(openai().responses) as (
+        b: Record<string, unknown>,
+      ) => Promise<unknown>;
+
+      const call = async (body: Record<string, unknown>): Promise<ResponsePayload> => {
+        try {
+          return (await create(body)) as ResponsePayload;
+        } catch (err) {
+          const dropped = unsupportedParam(err);
+          if (dropped && !drop.has(dropped)) {
+            drop.add(dropped);
+            delete body[dropped === 'temperature' ? 'temperature' : 'reasoning'];
+            return (await create(body)) as ResponsePayload;
+          }
+          if (isModelUnavailable(err)) {
+            throw new ModelUnavailableError(String((err as Error)?.message ?? err));
+          }
+          throw err;
+        }
+      };
+
+      let body: Record<string, unknown> = { ...base(), input: opts.input };
+      if (opts.previousResponseId) body.previous_response_id = opts.previousResponseId;
+
+      let response = await call(body);
+      tokensIn += response.usage?.input_tokens ?? 0;
+      tokensOut += response.usage?.output_tokens ?? 0;
+
+      for (let round = 0; round < maxRounds; round += 1) {
+        const pedidos = (response.output ?? []).filter((item) => item.type === 'function_call');
+        if (pedidos.length === 0) break;
+
+        const salidas: Record<string, unknown>[] = [];
+        for (const pedido of pedidos) {
+          const t0 = Date.now();
+          let resultado: unknown;
+          let ok = true;
+          let args: Record<string, unknown> = {};
+          try {
+            args = pedido.arguments ? (JSON.parse(pedido.arguments) as Record<string, unknown>) : {};
+            resultado = opts.onToolCall
+              ? await opts.onToolCall(pedido.name ?? '', args)
+              : { error: 'sin manejador de herramientas' };
+          } catch (err) {
+            // El error de una herramienta se le DEVUELVE al modelo en vez de
+            // tumbar el turno: "no pude consultar la agenda" es información con
+            // la que un setter sabe qué hacer (disculparse y reintentar). Un
+            // 500 en medio de un WhatsApp no lo es.
+            ok = false;
+            resultado = { error: err instanceof Error ? err.message : String(err) };
+          }
+
+          toolCalls.push({
+            name: pedido.name ?? '',
+            args,
+            result: resultado,
+            ok,
+            durationMs: Date.now() - t0,
+          });
+
+          salidas.push({
+            type: 'function_call_output',
+            call_id: pedido.call_id,
+            output: JSON.stringify(resultado ?? { ok }),
+          });
+        }
+
+        const ultimaRonda = round === maxRounds - 1;
+        body = { ...base(!ultimaRonda), input: salidas, previous_response_id: response.id };
+        response = await call(body);
+        tokensIn += response.usage?.input_tokens ?? 0;
+        tokensOut += response.usage?.output_tokens ?? 0;
+      }
+
+      const texto = response.output_text ?? '';
+      if (!texto.trim()) {
+        lastError = new Error(
+          `${model} no devolvió texto (status=${response.status ?? '?'}, ` +
+            `motivo=${response.incomplete_details?.reason ?? '—'}). ` +
+            'Sube el tope de tokens o baja el esfuerzo en /admin/modelos.',
+        );
+        continue;
+      }
+
+      let payload: unknown;
+      try {
+        payload = JSON.parse(texto);
+      } catch {
+        lastError = new Error(`${model} devolvió algo que no es JSON: ${texto.slice(0, 200)}`);
+        continue;
+      }
+
+      const parsed = opts.schema.safeParse(payload);
+      if (!parsed.success) {
+        lastError = new Error(
+          `salida inválida contra ${opts.schemaName}: ${parsed.error.issues
+            .slice(0, 3)
+            .map((i) => `${i.path.join('.')}: ${i.message}`)
+            .join(' · ')}`,
+        );
+        continue;
+      }
+
+      const durationMs = Date.now() - startedAt;
+      const costUsd = estimateCost(model, tokensIn, tokensOut);
+
+      await logRun(opts, {
+        model,
+        tokensIn,
+        tokensOut,
+        costUsd,
+        durationMs,
+        status: 'ok',
+        error: null,
+        output: { data: parsed.data, tools: toolCalls.map((t) => ({ name: t.name, ok: t.ok })) },
+      });
+
+      return {
+        data: parsed.data,
+        responseId: response.id ?? null,
+        toolCalls,
+        model,
+        tokensIn,
+        tokensOut,
+        costUsd,
+        durationMs,
+      };
+    } catch (err) {
+      lastError = err;
+      if (err instanceof ModelUnavailableError) continue;
+      break;
+    }
+  }
+
+  const durationMs = Date.now() - startedAt;
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  await logRun(opts, {
+    model: route.models[0],
+    tokensIn,
+    tokensOut,
+    costUsd: estimateCost(route.models[0], tokensIn, tokensOut),
+    durationMs,
+    status: 'failed',
+    error: message,
+    output: null,
+  });
+
+  throw new Error(`[ai:${opts.step}] ${message}`);
+}

@@ -306,6 +306,26 @@ async function persistFindings(
       confidence: crawl.ok ? 0.9 : 0.3,
     },
     { section: 'social_proof', payload: f.social_proof, confidence: crawl.ok ? 0.8 : 0.3 },
+    // El TEXTO de las páginas, no solo lo que el modelo extrajo de ellas.
+    //
+    // Se agregó con P7: la base de conocimiento del agente de agendamiento se
+    // arma con las palabras del cliente, y las palabras del cliente estaban
+    // pasando por el crawler y muriendo ahí. Guardarlas cuesta unos KB de jsonb
+    // y evita volver a bajar el sitio cada vez que se reindexa.
+    //
+    // Confianza 1: es texto textual, no una inferencia. No hay nada que dudar.
+    {
+      section: 'pages',
+      payload: {
+        pages: crawl.pages.map((page) => ({
+          url: page.url,
+          title: page.title,
+          description: page.description,
+          text: page.text,
+        })),
+      },
+      confidence: crawl.ok ? 1 : 0,
+    },
     {
       section: 'meta',
       payload: {

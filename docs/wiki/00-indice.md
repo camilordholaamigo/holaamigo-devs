@@ -91,6 +91,8 @@ guard_events                                     → 16
 | 18 | [El President como CRO](./18-el-president-como-cro.md) | P&G por canal, CAC y payback, pre-registro de experimentos y el libro de resultados |
 | 19 | [La CMO expandida](./19-la-cmo-expandida.md) | Posicionamiento medible, competencia, fábrica de ángulos, prueba social y upsell con escalera |
 | 20 | [Integraciones, CRM y habilidades](./20-integraciones-crm-y-habilidades.md) | El tool list como intersección, el "intraer", los lotes por créditos y el CRM con actor |
+| 21 | [El flujo inicial y su embudo](./21-flujo-inicial-y-embudo.md) | La línea de tiempo del research, la primera cifra en la pregunta 5, la cascada, el embudo y `/admin/embudo` |
+| 22 | [El agente de agendamiento](./22-agente-de-agendamiento.md) | Del diagnóstico al setter de WhatsApp: el playbook compilado, el vector store, las herramientas de agenda y el simulador |
 
 ## Los seis principios que gobiernan todo
 

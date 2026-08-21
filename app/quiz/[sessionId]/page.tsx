@@ -20,7 +20,11 @@ export default async function QuizPage({ params }: PageProps<'/quiz/[sessionId]'
   if (!session) notFound();
 
   const [{ data: org }, { data: run }] = await Promise.all([
-    db().from('organizations').select('domain, name').eq('id', session.organization_id).single(),
+    db()
+      .from('organizations')
+      .select('domain, name, currency')
+      .eq('id', session.organization_id)
+      .single(),
     db()
       .from('research_runs')
       .select('id')
@@ -55,6 +59,10 @@ export default async function QuizPage({ params }: PageProps<'/quiz/[sessionId]'
       <QuizFlow
         sessionId={sessionId}
         domain={org?.domain ?? 'tu sitio'}
+        // El research escribe la moneda en `organizations` al detectar el país
+        // (ADR 0006). Si todavía no terminó, el adelanto sale en USD — que es
+        // el fallback correcto, no una moneda inventada.
+        currency={org?.currency ?? 'USD'}
         initialRunId={run?.id ?? null}
       />
     </main>

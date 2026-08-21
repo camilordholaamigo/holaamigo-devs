@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { saveAnswer, getQuizState, markQuizCompleted } from '@/lib/quiz/service';
+import { buildQuizPreview } from '@/lib/quiz/preview';
 import { track } from '@/lib/events';
+
+/** Las dos respuestas que desbloquean el adelanto de la primera fuga. */
+const PREVIEW_KEYS = new Set(['ticket_band', 'dormant_db']);
 
 /**
  * POST /api/quiz/answer — persiste una respuesta y devuelve la siguiente.
@@ -54,6 +58,21 @@ export async function POST(request: Request) {
       await markQuizCompleted(sessionId, state.organizationId);
     }
 
+    // El adelanto solo se manda en la respuesta que lo desbloquea. Si se
+    // mandara siempre que se puede calcular, la tarjeta reaparecería en cada
+    // pregunta restante del quiz y dejaría de ser un momento para volverse
+    // decorado. El número lo pone el servidor y no el navegador por la razón
+    // de siempre: una sola fuente para la cifra (ADR 0007).
+    const preview = PREVIEW_KEYS.has(key) ? buildQuizPreview(state.answers) : null;
+
+    if (preview) {
+      await track('quiz_preview_shown', {
+        organizationId: state.organizationId,
+        sessionId,
+        props: { leak_usd: Math.round(preview.leak_usd), trigger: key },
+      });
+    }
+
     return NextResponse.json(
       {
         question: state.question,
@@ -61,6 +80,7 @@ export async function POST(request: Request) {
         total: state.totalEstimate,
         done: state.done,
         organizationId: state.organizationId,
+        preview,
       },
       { headers: { 'cache-control': 'no-store' } },
     );

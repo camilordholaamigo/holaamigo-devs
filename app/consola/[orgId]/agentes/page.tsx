@@ -3,6 +3,7 @@ import { SectionTitle, Empty, Card, Badge } from '@/components/ui';
 import { AgentConfigForm, type AgentView } from '@/components/agent-config-form';
 import { MailboxForm } from '@/components/mailbox-form';
 import { InstantlyPanel } from '@/components/instantly-panel';
+import { SetterPanel } from '@/components/setter-panel';
 import { mailboxCapacity } from '@/lib/observability/summary';
 import { listLeadLists, instantlyStatus } from '@/lib/integrations/instantly';
 import { formatNumber } from '@/lib/utils';
@@ -62,6 +63,15 @@ export default async function AgentesPage({ params }: PageProps<'/consola/[orgId
             ))}
           </div>
         )}
+      </section>
+
+      <section className="space-y-6">
+        <SectionTitle
+          eyebrow="WhatsApp"
+          title="Tu agente de agendamiento"
+          subtitle="El guion con el que sale a conversar, dónde se caen las conversaciones, y la instrucción textual que lee antes de cada mensaje."
+        />
+        <SetterPanel orgId={orgId} />
       </section>
 
       <section className="space-y-6">

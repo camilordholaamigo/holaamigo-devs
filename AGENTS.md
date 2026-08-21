@@ -32,6 +32,8 @@ ejecutar → documentar. No se salta ningún paso, ni cuando hay prisa.
 | **El pre-registro de un experimento es inmutable una vez que arranca.** Lo impide un trigger. Si hay que cambiarlo, se aborta y se abre otro — y el intento fallido queda visible en el libro. | [ADR 0020](docs/adr/0020-pre-registro-y-economia-por-canal.md) |
 | **Ninguna señal de upsell llega al cliente sin pasar por `/admin/senales`.** Lo exige un `check`. Y ningún caso de estudio se publica sin la aprobación del cliente final. | [ADR 0021](docs/adr/0021-la-cmo-expandida.md) |
 | **El tool list de un agente es una intersección que se calcula en runtime**, y una habilidad de clase `spend` o `irreversible` no se enciende sin operador y sin sobre. | [ADR 0022](docs/adr/0022-habilidades-y-crm-con-actor.md) |
+| **Nada en pantalla finge progreso que no está pasando**, y toda cifra adelantada sale de la misma función que produce la final. La agregación del embudo vive en SQL, no en el render. | [ADR 0023](docs/adr/0023-mostrar-el-trabajo.md) |
+| **El agente de agendamiento se compila del diagnóstico, y ningún número suyo lo escribe un modelo.** El esquema que va a OpenAI no tiene un solo `z.number()`, y `blanquearCifras()` borra las que se cuelen en el texto. El plan comercial ya no topa lo que el agente hace con sus propios objetos: solo lo que sale del edificio. | [ADR 0024](docs/adr/0024-el-agente-se-compila-del-diagnostico.md) |
 
 ## Los seis principios (PRD §13)
 

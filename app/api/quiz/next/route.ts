@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getQuizState } from '@/lib/quiz/service';
+import { buildQuizPreview } from '@/lib/quiz/preview';
 import { db } from '@/lib/supabase/admin';
 
 /**
@@ -44,6 +45,10 @@ export async function POST(request: Request) {
         organizationId: state.organizationId,
         runId: run?.id ?? null,
         researchStatus: run?.status ?? 'none',
+        // Sin `track`: acá el adelanto se devuelve para que sobreviva a un
+        // refresco de la página, no porque sea la primera vez que se muestra.
+        // Contarlo también aquí inflaría `quiz_preview_shown` con recargas.
+        preview: buildQuizPreview(state.answers),
       },
       { headers: { 'cache-control': 'no-store' } },
     );

@@ -4,8 +4,12 @@ import { db } from '@/lib/supabase/admin';
 import { Card, Badge, SectionTitle, Stat, Empty } from '@/components/ui';
 import { BAND_LABEL, type Band } from '@/lib/scoring';
 import { BandOverride } from '@/components/band-override';
+import { ScoreBar } from '@/components/charts/score-bar';
+import { LeakWaterfall, type WaterfallLeak } from '@/components/charts/leak-waterfall';
+import { InverseFunnel } from '@/components/charts/inverse-funnel';
 import { formatMoney, formatNumber } from '@/lib/utils';
-import { toCurrency } from '@/config/assumptions';
+import { toCurrency, type Assumptions } from '@/config/assumptions';
+import type { InverseMath } from '@/lib/diagnostic/math';
 
 /**
  * §9.2 — la ficha 360 del prospecto.
@@ -21,6 +25,19 @@ import { toCurrency } from '@/config/assumptions';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+
+/**
+ * Un supuesto editado puede ser una tasa (`close_rate` 0,18) o un conteo
+ * (`dormant_contacts` 5.500). `formatNumber` redondea, así que una tasa saldría
+ * como "0 ↑ 0" — que es exactamente el caso donde la señal importa más, porque
+ * las tasas son los defaults que ponemos nosotros.
+ */
+function valorDeSupuesto(value: number): string {
+  if (!Number.isFinite(value)) return '—';
+  if (Math.abs(value) < 1) return `${Math.round(value * 1000) / 10}%`;
+  if (Math.abs(value) < 10) return String(Math.round(value * 10) / 10);
+  return formatNumber(value);
+}
 
 export default async function ProspectDetail({ params }: PageProps<'/admin/prospects/[orgId]'>) {
   const { orgId } = await params;
@@ -88,11 +105,28 @@ export default async function ProspectDetail({ params }: PageProps<'/admin/prosp
   const currency = org.currency ?? 'USD';
   const band = (score.data?.band ?? 'auto') as Band;
   const totalCost = (runs.data ?? []).reduce((sum, r) => sum + Number(r.cost_usd ?? 0), 0);
-  const leaks = Array.isArray(diagnostic.data?.leaks) ? diagnostic.data.leaks : [];
+  const leaks: WaterfallLeak[] = Array.isArray(diagnostic.data?.leaks) ? diagnostic.data.leaks : [];
   const totalLeak = leaks.reduce(
     (sum: number, l: { monthly_value_usd?: number }) => sum + Number(l?.monthly_value_usd ?? 0),
     0,
   );
+
+  // Los supuestos y la cuenta al revés que el cliente tiene EN ESTE MOMENTO:
+  // la ruta de edición sobrescribe la fila, así que esto ya refleja lo que él
+  // movió. La dirección de cada movimiento sale del timeline, no de acá.
+  const assumptions = (diagnostic.data?.assumptions ?? null) as Assumptions | null;
+  const inverse = (diagnostic.data?.inverse_math ?? null) as InverseMath | null;
+
+  // Qué números discutió y hacia dónde. Es la señal más honesta que tenemos
+  // (§9.1, vale 5 puntos de intent) y estaba enterrada en el JSON del timeline.
+  const ediciones = (events.data ?? [])
+    .filter((e) => e.event === 'assumption_edited')
+    .map((e) => e.props as { changed?: string | null; from?: number | null; to?: number | null })
+    .filter((p) => p?.changed && typeof p.from === 'number' && typeof p.to === 'number');
+
+  const ultimaSesion = (sessions.data ?? [])[0];
+  const utm = (ultimaSesion?.utm ?? {}) as Record<string, string>;
+  const utmVisible = Object.entries(utm).filter(([, value]) => Boolean(value));
 
   return (
     <div className="mx-auto max-w-7xl space-y-12 px-6 py-10">
@@ -158,13 +192,109 @@ export default async function ProspectDetail({ params }: PageProps<'/admin/prosp
           <Stat label="Contactos cargados" value={formatNumber(leads.data?.length ?? 0)} />
         </Card>
         <Card className="p-5">
-          <Stat
-            label="Fit / Intent"
-            value={`${score.data?.fit_score ?? 0} / ${score.data?.intent_score ?? 0}`}
-            hint="máximo 60 / 40"
-          />
+          <p className="mb-3 text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
+            Fit e intent
+          </p>
+          <ScoreBar fit={score.data?.fit_score ?? 0} intent={score.data?.intent_score ?? 0} />
         </Card>
       </div>
+
+      {/* ── Lo mismo que vio el cliente ──────────────────────────────────
+          Los dos gráficos del diagnóstico, con los supuestos vigentes. No es
+          decoración: cuando alguien llama a un prospecto ATTACK, la primera
+          frase útil es su cifra más grande, y leerla de una tabla de JSON antes
+          de marcar no es viable. */}
+      {leaks.length > 0 && assumptions ? (
+        <section className="space-y-4">
+          <SectionTitle
+            eyebrow="§7.3 · §7.4"
+            title="Lo que él está viendo"
+            subtitle="Con los supuestos vigentes — si editó alguno, esto ya lo refleja."
+          />
+          <div className="grid gap-6 lg:grid-cols-2">
+            <Card className="p-6">
+              <LeakWaterfall
+                leaks={leaks}
+                baselineUsd={assumptions.monthly_revenue_usd}
+                currency={currency}
+              />
+            </Card>
+            {inverse ? (
+              <Card className="p-6">
+                <InverseFunnel
+                  inverse={inverse}
+                  weeks={assumptions.weeks_available}
+                  bookingRate={assumptions.booking_rate}
+                  closeFromMeeting={assumptions.close_from_meeting}
+                />
+                {!inverse.feasible ? (
+                  <p className="mt-4 rounded-lg bg-leak-soft px-4 py-3 text-[13px] text-leak">
+                    Meta declarada imposible: {inverse.infeasible_reason}
+                  </p>
+                ) : null}
+              </Card>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+
+      {/* ── Qué números discutió ─────────────────────────────────────────── */}
+      {ediciones.length > 0 ? (
+        <section className="space-y-4">
+          <SectionTitle
+            eyebrow="§9.1"
+            title="Qué números no se creyó"
+            subtitle="Editar un supuesto vale 5 puntos de intent. La dirección dice si nos considera optimistas o pesimistas — y es el mejor gancho para la llamada."
+          />
+          <Card className="divide-y divide-line">
+            {ediciones.map((edicion, index) => {
+              const subio = (edicion.to as number) > (edicion.from as number);
+              return (
+                <div
+                  key={index}
+                  className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-5 py-3"
+                >
+                  <p className="w-56 shrink-0 font-mono text-[12.5px] text-ink">
+                    {edicion.changed}
+                  </p>
+                  <p className="tnum text-[13.5px] text-ink-soft">
+                    {valorDeSupuesto(edicion.from as number)}
+                    <span className={subio ? 'mx-2 text-money' : 'mx-2 text-leak'}>
+                      {subio ? '↑' : '↓'}
+                    </span>
+                    <span className="font-semibold text-ink">
+                      {valorDeSupuesto(edicion.to as number)}
+                    </span>
+                  </p>
+                </div>
+              );
+            })}
+          </Card>
+        </section>
+      ) : null}
+
+      {/* ── De dónde llegó ───────────────────────────────────────────────
+          Se venía seleccionando `utm` y `referrer` y no se renderizaba nunca. */}
+      {utmVisible.length > 0 || ultimaSesion?.referrer ? (
+        <section className="space-y-4">
+          <SectionTitle eyebrow="Atribución" title="De dónde llegó" />
+          <Card className="flex flex-wrap gap-2 p-5">
+            {utmVisible.map(([key, value]) => (
+              <span
+                key={key}
+                className="rounded-full bg-paper-sunken px-3 py-1 text-[12px] text-ink-soft"
+              >
+                {key} <span className="font-semibold text-ink">{value}</span>
+              </span>
+            ))}
+            {ultimaSesion?.referrer ? (
+              <span className="rounded-full bg-paper-sunken px-3 py-1 text-[12px] text-ink-soft">
+                referrer <span className="font-semibold text-ink">{ultimaSesion.referrer}</span>
+              </span>
+            ) : null}
+          </Card>
+        </section>
+      ) : null}
 
       {/* ── Override de banda (§9.1) ─────────────────────────────────── */}
       <section className="space-y-4">

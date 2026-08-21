@@ -31,7 +31,9 @@ export type StepName =
   | 'diagnosis'
   | 'angles'
   | 'classify'
-  | 'chapter';
+  | 'chapter'
+  | 'playbook'
+  | 'setter';
 
 export const STEP_NAMES: StepName[] = [
   'research',
@@ -41,6 +43,8 @@ export const STEP_NAMES: StepName[] = [
   'angles',
   'classify',
   'chapter',
+  'playbook',
+  'setter',
 ];
 
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
@@ -87,6 +91,16 @@ export const STEP_LABELS: Record<StepName, { title: string; detail: string }> = 
   classify: {
     title: 'Clasificación de respuestas',
     detail: 'Decide qué es cada correo entrante. Volumen alto, decisión simple, el modelo más barato basta.',
+  },
+  playbook: {
+    title: 'El guion del agente de agendamiento',
+    detail:
+      'Compila el manual del setter desde el diagnóstico. Corre una vez por cliente y define cómo suena su agente durante meses: acá subir el modelo se paga solo.',
+  },
+  setter: {
+    title: 'El agente de agendamiento conversando',
+    detail:
+      'Cada turno de cada conversación de WhatsApp. Volumen alto y el contacto esperando: la latencia ES la funcionalidad. Un modelo grande acá se nota en la factura antes que en la tasa de agendamiento.',
   },
   chapter: {
     title: 'El Capítulo de cada mañana',
@@ -169,6 +183,31 @@ export const DEFAULT_ROUTES: Record<StepName, StepConfig> = {
     temperature: 0,
     reasoningEffort: 'minimal',
     budgetTokens: 4_000,
+  },
+
+  playbook: {
+    // Se compila UNA vez por cliente y su salida gobierna todas las
+    // conversaciones que vengan después. Es el paso con mejor relación entre lo
+    // que cuesta y lo que dura: unos centavos que definen el tono de meses.
+    models: chain('MODEL_PLAYBOOK', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'),
+    maxOutputTokens: 20_000,
+    webSearch: false,
+    temperature: null,
+    reasoningEffort: 'low',
+    budgetTokens: 80_000,
+  },
+
+  setter: {
+    // Hay una persona mirando "escribiendo…" en WhatsApp. Un turno que tarda
+    // ocho segundos no es un turno lento: es una conversación perdida. Por eso
+    // `minimal` de esfuerzo y el modelo chico, y por eso los HECHOS los pone el
+    // playbook en la instrucción en vez de pedirle al modelo que los recuerde.
+    models: chain('MODEL_SETTER', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'),
+    maxOutputTokens: 6_000,
+    webSearch: false,
+    temperature: 0.4,
+    reasoningEffort: 'minimal',
+    budgetTokens: 12_000,
   },
 
   chapter: {

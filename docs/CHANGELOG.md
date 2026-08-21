@@ -8,6 +8,244 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.7.0] — 2026-08-20 · Del diagnóstico a un agente que agenda
+
+Appointment setting por WhatsApp es el primer mercado, y entre "el cliente leyó
+su diagnóstico" y "el cliente tiene un agente que agenda citas" había dos
+semanas de correos. Todo lo que se intercambiaba en esas dos semanas ya estaba
+en nuestra base cuando terminó el quiz; nadie lo estaba leyendo.
+
+Ahora elegir WhatsApp **arma el agente en menos de un minuto** y el cliente le
+habla ahí mismo, antes de que exista el número.
+
+Ver [ADR 0024](adr/0024-el-agente-se-compila-del-diagnostico.md) y
+[wiki/22](wiki/22-agente-de-agendamiento.md).
+
+### Agregado
+
+- **El playbook compilado** (`lib/playbook/compile.ts`, `holaamigo.agent_playbooks`).
+  Un objeto de datos versionado —oferta, calificación, objeciones, FAQ,
+  agendamiento, guion, escalamiento, tono— que sale de leer el research, el
+  Brief, el diagnóstico y las respuestas del quiz. El modelo aporta lenguaje; el
+  código aporta los hechos y los números. `PlaybookLanguageSchema` **no tiene un
+  solo `z.number()`**, y `blanquearCifras()` borra del texto cualquier cifra de
+  dinero que no esté autorizada por el Brief o publicada en el sitio: el guion
+  llega a un contacto real sin ninguna pantalla intermedia donde un humano lo
+  lea.
+
+- **La base de conocimiento** (`lib/playbook/knowledge.ts`,
+  `holaamigo.knowledge_bases`). Un vector store por organización con el sitio del
+  cliente, su oferta, sus precios, su competencia y su FAQ. `file_search` en cada
+  turno. Vence a los 30 días de inactividad para que un prospecto que probó una
+  vez no cueste plata para siempre. **Si falla, el agente sigue funcionando**: los
+  hechos viven en el playbook, no en el índice.
+
+- **El runtime del setter** (`lib/whatsapp/setter.ts`, `lib/whatsapp/tools.ts`).
+  Responses API con `previous_response_id` —el turno 20 cuesta lo mismo que el
+  2— y herramientas que tocan la agenda de verdad: `consultar_horarios`,
+  `agendar_cita`, `registrar_calificacion`, `escalar_a_humano`, `no_contactar`.
+  El tool list es la intersección de siempre, calculada en runtime.
+  `runConversation()` vive en `lib/ai/client.ts` para que siga habiendo **una
+  sola** envoltura sobre la Responses API.
+
+- **`/agente/[orgId]`.** El orden es el de la confianza y no el obvio: primero
+  háblale, después confirma lo que inferimos, y al final da tu número. Pedir
+  datos antes de que el cliente vea para qué son es cómo se pierde a la mitad de
+  la gente.
+
+- **El simulador** (`/api/agent/chat`). Corre por el mismo runtime que las
+  conversaciones reales, con `channel = 'simulador'`. Solo se apagan las
+  escrituras hacia afuera. En la interfaz se ven las herramientas que usó cada
+  turno: "Consultó tu agenda" al lado del mensaje es la diferencia entre creerle
+  al agente y poder verificarlo.
+
+- **"Confirmá cuatro cosas"** (`components/playbook-review.tsx`) en vez de un
+  formulario. Cada campo trae su valor ya escrito, dice por qué importa, y sube
+  el porcentaje de cobertura al confirmarlo.
+
+- **El embudo del setter** (`holaamigo.embudo_del_setter`,
+  `holaamigo.objeciones_que_matan`) en `/consola/[orgId]/agentes`, junto con la
+  **instrucción textual completa** que el modelo lee en cada turno. Sin resumir.
+
+- **El webhook de WhatsApp contesta.** Con playbook, el agente responde y se
+  envía por la Cloud API. Sin playbook, sigue el camino de v1: clasificar,
+  suprimir y escalar. Un lead suprimido no recibe respuesta automática aunque
+  escriba.
+
+### Cambiado
+
+- **`techo_de_plan` ahora recibe la clase de riesgo.** Lo encontró una prueba: un
+  cliente del plan `diagnostico` no podía compilar su propio playbook, porque el
+  techo L2 se aplicaba por igual a todas las clases y compilar terminaba en una
+  tarjeta de aprobación por cada build. La regla correcta ya estaba escrita en
+  `techo_de_autonomia`: **el plan gobierna lo que sale del edificio, no lo que el
+  agente hace con sus propios objetos.** `read` y `write` van libres;
+  `external_comms`, `spend` e `irreversible` siguen topados. `min_plan` y
+  `platform_ceiling` no se tocaron. `autorizar` y `habilidades_activas` se
+  redefinen enteras en `0013` con esa única línea distinta.
+
+- **`stage_alcanzado` en `conversations`**, mantenido por trigger. Otro bug que
+  encontró la prueba: `cerrar_conversacion()` pone `stage = 'cerrado'`, así que
+  una conversación que llegó a proponer horario y después escaló quedaba contada
+  como si nunca hubiera pasado de la apertura. El embudo contaba de menos
+  exactamente en las conversaciones que más interesan.
+
+- **`embudo_inicial` tiene ocho etapas**, no seis: se sumaron "Armó su agente" y
+  "Habló con su agente". Se redefine en `0013` en vez de editar `0012`, porque una
+  migración que cambia después de haberse aplicado es una migración que nadie
+  puede auditar.
+
+- **`/conectar` cambió de significado.** Elegir WhatsApp ya no registra una
+  intención: arma el agente. El skip sigue visible (§13.5).
+
+- **El research persiste el texto de las páginas** (sección `pages` de
+  `research_findings`). Pasaba por el crawler y moría ahí; ahora es la materia
+  prima de la base de conocimiento.
+
+- **Pasos de modelo nuevos:** `playbook` y `setter`, configurables en caliente
+  desde `/admin/modelos` como todos los demás.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0013_agente_de_agendamiento.sql`** en el SQL
+   Editor de Supabase. Crea `agent_playbooks`, `knowledge_bases`,
+   `conversations` y `conversation_turns`; siembra cuatro capacidades y cuatro
+   habilidades; y **redefine `techo_de_plan`, `autorizar`, `habilidades_activas`
+   y `embudo_inicial`**. Es idempotente.
+
+2. **Verificar que quedó aplicada:**
+
+   ```sql
+   select holaamigo.techo_de_plan('diagnostico', 'write');  -- 5
+   select holaamigo.techo_de_plan('diagnostico', 'external_comms');  -- 2
+   select id from holaamigo.capabilities where id like 'playbook%' or id like 'setter%';
+   select count(*) from holaamigo.embudo_inicial();  -- 8
+   ```
+
+3. **Variables de entorno.** Ninguna nueva es obligatoria. Para que el agente
+   **envíe** por WhatsApp (además de razonar) hacen falta, cuando el número esté
+   aprobado por Meta:
+
+   ```
+   WHATSAPP_TOKEN=...
+   WHATSAPP_PHONE_NUMBER_ID=...
+   ```
+
+   Sin ellas el turno se calcula igual y el mensaje queda en `messages` con
+   estado `queued` y el motivo escrito. No es un fallo silencioso.
+
+4. **Opcional, por modelo:** `MODEL_PLAYBOOK` y `MODEL_SETTER`. Por defecto
+   `gpt-5-mini`. El playbook se compila una vez por cliente y gobierna meses de
+   conversaciones: es el paso donde subir el modelo se paga solo.
+
+5. **Nada que hacer con los clientes existentes.** Un cliente sin playbook sigue
+   funcionando por el camino de v1. El agente se compila la primera vez que
+   entra a `/agente/[orgId]` o elige WhatsApp en `/conectar`.
+
+---
+
+## [3.6.0] — 2026-08-17 · El flujo inicial muestra su trabajo
+
+Los primeros seis minutos son donde el cliente decide si esto piensa o si es un
+formulario con IA de adorno. Estábamos guardando toda la evidencia de que sí
+piensa y no mostrando casi nada de ella.
+
+Ni una llamada de modelo nueva: todo lo que aparece acá ya estaba en la base.
+Ver [ADR 0023](adr/0023-mostrar-el-trabajo.md) y
+[wiki/21](wiki/21-flujo-inicial-y-embudo.md).
+
+### Agregado
+
+- **La cascada de fugas** (`components/charts/leak-waterfall.tsx`). Las cuatro
+  fugas eran cuatro renglones sin proporción entre sí: decían cuánto, no *cuánto
+  de qué*. Ahora se ve el techo alcanzable arriba, cada fuga como el pedazo que
+  se cae, y lo que entra hoy abajo. Cada barra arranca donde termina la anterior.
+  Se mueve con los controles, en el mismo frame.
+
+- **El embudo de la cuenta al revés** (`components/charts/inverse-funnel.tsx`).
+  `computeInverseMath` ya producía la cadena entera y se renderizaba como una
+  lista numerada. El embudo va **al derecho** aunque la cuenta vaya al revés, con
+  la conversión de cada caída al lado y los contactos por semana destacados
+  debajo. La derivación con sus fórmulas sigue ahí, intacta: el dibujo no
+  reemplaza la auditoría.
+
+- **La primera cifra, en la pregunta 5** (`lib/quiz/preview.ts`). Al responder
+  `dormant_db` el servidor devuelve la fuga de base dormida ya calculada, con su
+  fórmula, y **se queda en pantalla el resto del quiz**. Sale de `computeLeaks`,
+  no de una fórmula copiada, así que no puede contradecir al diagnóstico. Si
+  respondió "No sé", no hay adelanto. Evento nuevo: `quiz_preview_shown`.
+
+- **`/admin/embudo`.** `plg_events` llevaba desde `0001` guardando todo lo
+  necesario y nadie lo agregaba. Tres bloques, cada uno con su decisión escrita
+  encima: dónde se cae la gente · en qué pregunta exacta · qué supuestos
+  discuten. Más la duración real del quiz contra los 6 minutos que promete la
+  landing. Sin series temporales: se respeta el criterio de wiki/14.
+
+- **Tres funciones de agregación** en `0012_flujo_inicial.sql`:
+  `embudo_inicial()` (por organización, cohorte anclada al primer
+  `landing_submit`), `caida_por_pregunta()` (abandonos = última respuesta de una
+  sesión sin completar) y `supuestos_discutidos()` (dirección de cada edición).
+
+- **En la ficha 360:** los dos gráficos que el cliente está viendo, fit e intent
+  sobre una barra de 100 con los umbrales dibujados, qué números no se creyó con
+  la dirección del cambio, y `utm`/`referrer` — que se venían seleccionando y no
+  se renderizaban nunca.
+
+- **`node scripts/test-flujo-inicial.mjs`** — 18 chequeos de las tres funciones
+  contra Postgres real (PGlite). Ya entró a `npm test`.
+
+### Cambiado
+
+- **El ticker del research pasó de una línea a una línea de tiempo.**
+  `progress_log` guarda hasta 40 pasos con timestamp y se mostraba **uno**. Ahora
+  se ven los últimos cuatro con el tiempo real de cada uno. Una línea que cambia
+  cada tanto se lee como un spinner con texto; la lista con tiempos prueba que
+  hubo trabajo.
+
+- **La pantalla de ensamblaje dejó de mentir.** Rotaba cinco frases con un
+  `setInterval(4200)` que no tenía relación con nada, y es la pantalla más larga
+  del flujo. Ahora hay dos cosas vivas y las dos son reales: el estado del
+  research y un cronómetro. Los cinco pasos siguen listados en presente, sin
+  marcador por paso — se dice qué está corriendo, no se finge saber en cuál va.
+  Pasados los 90 s el mensaje lo reconoce.
+
+- **`assumption_edited` ahora lleva `from` y `to`.** Guardaba el objeto completo
+  de supuestos y nadie comparaba dos versiones: sabíamos que alguien tocó
+  `close_rate` pero no si nos considera optimistas o pesimistas, que es lo que
+  cambia el default. El origen se captura en el primer disparo del arrastre y no
+  en el último, para que mover 18% → 40% no quede registrado como "subió un
+  punto". Los campos son opcionales: un cliente con la página vieja en caché
+  sigue guardando su supuesto, solo que sin dirección.
+
+- `QuizFlow` recibe `currency` — el adelanto se muestra en la moneda local que
+  el research escribió en `organizations` (ADR 0006), y en USD si todavía no
+  terminó.
+
+### Sabido y no hecho
+
+- **No hay evento de visita a la landing**, así que la conversión visitante →
+  submit que §4.1 declara (≥35%) **no se puede calcular**. El embudo arranca en
+  `landing_submit` y la pantalla lo dice en vez de dibujar una primera barra al
+  100% que parezca que sí. Un `POST /api/track` público es una superficie de
+  escritura nueva sobre `plg_events`; se hace cuando haga falta de verdad
+  (§13.3).
+- `supuestos_discutidos()` ignora las ediciones anteriores a esta versión: no
+  guardaban el valor previo y su dirección es irrecuperable.
+
+### Para desplegar
+
+1. **Correr `supabase/migrations/0012_flujo_inicial.sql`.** Idempotente, no crea
+   ni una tabla — son tres funciones y sus permisos.
+2. Verificar que el schema recargó: `select * from holaamigo.embudo_inicial();`
+   desde el SQL Editor debe devolver seis filas.
+3. **Sin variables de entorno nuevas y sin cambios de costo.** No hay ninguna
+   llamada de modelo adicional en todo esto.
+4. `/admin/embudo` queda en la barra del admin, entre Cola y Señales.
+5. El bloque "Qué números no se creen" arranca vacío y se llena con las
+   ediciones nuevas. Es esperado, no un error de despliegue.
+
+---
+
 ## [3.5.0] — 2026-08-16 · P6 · Integraciones, CRM propio y habilidades
 
 Sexta y última parte del plan de la meta-organización. P2 definió qué puede

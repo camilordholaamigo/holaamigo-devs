@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/supabase/admin';
 import { ConnectChannels } from '@/components/connect-channels';
+import { playbookVigente } from '@/lib/playbook/store';
 import { SectionTitle } from '@/components/ui';
 
 export const runtime = 'nodejs';
@@ -19,11 +20,10 @@ export default async function ConnectPage({ params }: PageProps<'/conectar/[sess
 
   if (!session) notFound();
 
-  const { data: diagnostic } = await db()
-    .from('diagnostics')
-    .select('share_token')
-    .eq('session_id', sessionId)
-    .maybeSingle();
+  const [{ data: diagnostic }, playbook] = await Promise.all([
+    db().from('diagnostics').select('share_token').eq('session_id', sessionId).maybeSingle(),
+    playbookVigente(session.organization_id),
+  ]);
 
   return (
     <main className="flex-1">
@@ -48,10 +48,14 @@ export default async function ConnectPage({ params }: PageProps<'/conectar/[sess
         <SectionTitle
           eyebrow="Paso 1 de 2"
           title="Conecta el canal por donde vas a trabajar"
-          subtitle="Puedes saltarte esto sin penalización. La carga de tu base es lo que sostiene la promesa de 24 horas, y no depende de tener un canal conectado."
+          subtitle="Si eliges WhatsApp, armamos tu agente de agendamiento ahora mismo y lo pruebas acá. Puedes saltarte esto sin penalización: la carga de tu base sostiene la promesa de 24 horas y no depende de tener un canal conectado."
         />
 
-        <ConnectChannels organizationId={session.organization_id} sessionId={sessionId} />
+        <ConnectChannels
+          organizationId={session.organization_id}
+          sessionId={sessionId}
+          tienePlaybook={Boolean(playbook)}
+        />
       </div>
     </main>
   );

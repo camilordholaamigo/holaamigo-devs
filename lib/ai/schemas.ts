@@ -486,3 +486,128 @@ export const CompetitorImpactSchema = z.object({
   severity: z.enum(['low', 'normal', 'high']),
 });
 export type CompetitorImpact = z.infer<typeof CompetitorImpactSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PLAYBOOK — el lenguaje del agente de agendamiento (P7)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Lo ÚNICO que el modelo aporta al playbook: cómo se dicen las cosas.
+ *
+ * MIRÁ EL ESQUEMA Y CONTÁ LOS `z.number()`. Son cero, y no es casualidad: el
+ * precio, la duración de la cita, la franja horaria y los topes los pone
+ * `lib/playbook/compile.ts` desde el Brief y desde la configuración real del
+ * agendador. Un modelo que puede escribir un número en el guion es un modelo
+ * que algún día le va a decir a un contacto "cuesta 400 dólares" sin que nadie
+ * lo haya autorizado.
+ *
+ * Es ADR 0007 llevado hasta su conclusión: la regla no es "revisá los números
+ * que devuelve el modelo", es "no le dejes escribir ninguno".
+ */
+export const PlaybookLanguageSchema = z.object({
+  lo_que_vendemos_aca: z
+    .string()
+    .describe(
+      'Qué vende el agente en ESTA conversación. Es la cita, no el producto. Una frase que sirva para volver al carril cuando la charla se va a hablar del producto.',
+    ),
+
+  calificacion: z.object({
+    preguntas: z.array(
+      z.object({
+        campo: z.enum(['encaje', 'momento', 'decisor', 'dolor']),
+        pregunta: z.string().describe('Tal cual se envía por WhatsApp. UNA sola pregunta. Máximo 25 palabras.'),
+        por_que: z.string().describe('Por qué esta pregunta importa en este negocio. Lo lee el cliente, no el contacto.'),
+        descalifica_si: z.array(z.string()).describe('Respuestas que hacen que no valga la pena la cita.'),
+      }),
+    ),
+    fuera_de_alcance: z.array(z.string()).describe('A quién NO le sirve esto. Sale del ICP.'),
+  }),
+
+  objeciones: z.array(
+    z.object({
+      objecion: z.string().describe('Como la escribe un contacto real por WhatsApp, no como la clasificaría un CRM.'),
+      respuesta: z.string().describe('Máximo dos frases. Termina volviendo a la cita, siempre.'),
+      source_url: z.string().nullable(),
+      inferred: z.boolean(),
+    }),
+  ),
+
+  faq: z.array(
+    z.object({
+      pregunta: z.string(),
+      respuesta: z.string().describe('Máximo dos frases. Sin precios que no estén en el input.'),
+      source_url: z.string().nullable(),
+      inferred: z.boolean(),
+    }),
+  ),
+
+  guion: z.object({
+    apertura: z.string().describe('Primer mensaje en frío. DICE DE DÓNDE SALIÓ EL NÚMERO. Máximo 40 palabras.'),
+    apertura_inbound: z.string().describe('Primer mensaje para quien escribió primero. No se presenta igual.'),
+    puente_a_la_cita: z.string().describe('De "hablemos" a "agendemos". Máximo 30 palabras.'),
+    oferta_de_horarios: z.string().describe('Cómo se ofrecen los horarios. Usa {{horarios}} donde van los cupos reales.'),
+    confirmacion: z.string().describe('Resumen de la cita + cómo cancelar. Usa {{cita}} y {{link}}.'),
+    seguimientos: z.array(z.string()).describe('Tres, de más a menos presión. El último da una salida limpia.'),
+    cierre_cortes: z.string().describe('Cómo se cierra con quien no califica, sin quemar la marca.'),
+  }),
+
+  escalamiento: z.object({
+    disparadores: z.array(z.string()).describe('Qué manda la conversación a un humano. Nunca vacío.'),
+    mensaje_al_contacto: z.string().describe('Lo que el agente escribe al escalar. El contacto no se queda en silencio.'),
+  }),
+
+  que_pasa_en_la_cita: z.string().describe('Qué va a pasar en esos minutos. Lo preguntan siempre.'),
+});
+export type PlaybookLanguage = z.infer<typeof PlaybookLanguageSchema>;
+
+/** Camino degradado: lo mínimo con lo que un setter puede trabajar. */
+export const PlaybookLanguageMinimalSchema = z.object({
+  lo_que_vendemos_aca: z.string(),
+  preguntas: z.array(z.string()).describe('Preguntas de calificación, en orden.'),
+  apertura: z.string(),
+  puente_a_la_cita: z.string(),
+});
+export type PlaybookLanguageMinimal = z.infer<typeof PlaybookLanguageMinimalSchema>;
+
+/**
+ * El setter clasificando su propio turno.
+ *
+ * `stage` y `qualification` no se le piden al modelo por prolijidad: son lo que
+ * alimenta `holaamigo.embudo_del_setter()`. Un embudo cuyo escalón lo deduce
+ * una expresión regular sobre el texto del mensaje es un embudo que miente el
+ * día que alguien reescribe el guion.
+ */
+export const SetterTurnSchema = z.object({
+  mensaje: z.string().describe('Lo que se le envía al contacto. Máximo 45 palabras. UNA pregunta.'),
+  stage: z.enum([
+    'apertura',
+    'descubrimiento',
+    'calificacion',
+    'objecion',
+    'oferta_de_cita',
+    'agendamiento',
+    'confirmado',
+    'cerrado',
+  ]),
+  descubierto: z.object({
+    encaje: z.string().nullable(),
+    momento: z.string().nullable(),
+    decisor: z.string().nullable(),
+    dolor: z.string().nullable(),
+  }),
+  intencion: z.enum([
+    'interested',
+    'question',
+    'objection',
+    'not_now',
+    'not_interested',
+    'opt_out',
+    'complaint',
+    'legal',
+    'ask_price',
+    'other',
+  ]),
+  debe_escalar: z.boolean(),
+  motivo_de_escalamiento: z.string().nullable(),
+});
+export type SetterTurn = z.infer<typeof SetterTurnSchema>;

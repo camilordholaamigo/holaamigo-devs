@@ -127,9 +127,16 @@ social. Al hacer submit se redirige al quiz **sin esperar la investigación**.
 
 Una pregunta a la vez, barra de progreso, y arriba el indicador vivo del
 research. **No es decorativo: es lo que sostiene la atención durante el quiz.**
+Es una línea de tiempo con los últimos cuatro pasos y el tiempo real de cada
+uno, no una sola línea que se reemplaza.
 
 6 fijas → 4–6 adaptadas a los hallazgos → 1 de cierre. **Guardado incremental:**
 cada respuesta persiste al instante.
+
+Al responder `dormant_db` (pregunta 5) aparece **la primera cifra de fuga, ya
+calculada y con su fórmula**, y se queda en pantalla el resto del quiz. Sale de
+`computeLeaks`, así que no puede contradecir al diagnóstico; si respondió "No
+sé", no hay adelanto. Ver [ADR 0023](adr/0023-mostrar-el-trabajo.md).
 
 ### 4.3 Diagnóstico
 
@@ -153,6 +160,14 @@ LetGrowth: es lo que genera confianza en este mercado.
 
 Dos botones, ambos con **skip visible**. El skip no penaliza: lleva directo a
 4.6, que es el camino de menor fricción y mayor valor inmediato.
+
+**Desde v3 (P7), elegir WhatsApp ya no registra una intención: arma el agente.**
+El playbook del agente de agendamiento se compila en menos de un minuto con el
+research, el Brief, el diagnóstico y las respuestas del quiz, y el cliente le
+habla ahí mismo en el simulador. Lo único que sigue tardando es la verificación
+del número con Meta —de 24 a 48 horas—, y esa demora es de Meta.
+
+Ver §15 y [ADR 0024](./adr/0024-el-agente-se-compila-del-diagnostico.md).
 
 ### 4.6 Carga de leads
 
@@ -206,6 +221,11 @@ Las fórmulas de fugas y de la cuenta al revés están en `wiki/06`. Cada supues
 es editable en pantalla con recálculo en vivo. **Eso convierte el diagnóstico en
 algo suyo y no en algo nuestro.**
 
+Dos figuras acompañan la aritmética y se mueven con los controles: la **cascada
+de fugas** (§7.3) y el **embudo de la cuenta al revés** (§7.4). Ninguna
+reemplaza la derivación escrita — el dibujo contesta "cuánto", la lista contesta
+"de dónde sale", y quitar la segunda rompería §13.4.
+
 ---
 
 ## 8 · Arquitectura técnica
@@ -234,6 +254,13 @@ Scoring FIT (0–60) + INTENT (0–40) → bandas AUTO / ASSIST / **ATTACK**.
 | **ATTACK** | ≥70 | **Alerta a Slack. Contacto humano en <30 min.** |
 
 Ficha 360, cola de decisiones global y salud de agentes: `wiki/08`.
+
+**`/admin/embudo`** mide nuestro producto, no el negocio del cliente: dónde se
+cae la gente en el flujo inicial, en qué pregunta exacta del quiz, y qué
+supuestos nuestros discuten. Tres bloques, cada uno con su decisión escrita
+encima; sin series temporales, por el criterio de `wiki/14`. La conversión
+visitante → submit de §4.1 **todavía no se puede calcular**: no hay evento de
+visita a la landing y la pantalla lo dice. Ver `wiki/21`.
 
 ---
 
@@ -369,6 +396,66 @@ un tipo de cliente, y la conversión pasa por nosotros?
 
 ---
 
+## 15 · v3 — El agente de agendamiento
+
+Appointment setting por WhatsApp es el primer mercado en el que nos enfocamos.
+Esta sección define el alcance de lo que se construyó para que el onboarding sea
+cero.
+
+### 15.1 La tesis
+
+Todo lo que hace falta para que un agente agende citas para un negocio —qué
+vende, a quién, a qué precio, qué objeciones recibe, qué preguntan siempre, cómo
+se reserva— ya está en nuestra base cuando termina el quiz. El producto no es
+pedirlo otra vez: es leerlo.
+
+### 15.2 El playbook
+
+Un objeto de datos versionado, no un prompt. Se compila; se le muestra al
+cliente campo por campo; se corrige con un tap; se diffea entre versiones.
+
+**El código pone los hechos y los números. El modelo pone el lenguaje.** El
+esquema que va a OpenAI no tiene un solo campo numérico, y una red en el
+compilador borra del texto cualquier cifra de dinero que no esté autorizada por
+el Brief o publicada en el sitio del cliente. Es ADR 0007 llevado al único lugar
+del producto donde un texto llega a un tercero sin que un humano lo lea.
+
+### 15.3 La base de conocimiento
+
+Un vector store por cliente con las palabras de su propio sitio. Aterriza las
+preguntas puntuales que el playbook no anticipa. **No sostiene los hechos**: si
+falla, el agente sigue funcionando.
+
+### 15.4 El banco de pruebas
+
+El cliente le habla a su agente antes de que exista el número. Corre por el mismo
+runtime que las conversaciones reales y muestra qué herramientas usó cada turno.
+
+Es la señal de activación más fuerte que tenemos: quien le escribe a su agente
+entiende qué compró.
+
+### 15.5 Qué sigue siendo manual
+
+La provisión del número con Meta. Se piden los tres datos que un operador
+necesitaría —qué número, si es suyo o hace falta uno, quién atiende las citas—
+mientras el cliente está mirando su agente funcionar, para que no haya un primer
+correo de ida y vuelta. Principio §13.3 intacto: se sigue provisionando a mano,
+pero ya no preguntando a mano.
+
+### 15.6 Métricas de v3
+
+| Métrica | Meta |
+|---|---|
+| Diagnósticos que terminan con un agente compilado | ≥50% |
+| Clientes que le hablan al agente en el simulador | ≥70% de los que lo compilan |
+| Campos de `a_confirmar` corregidos por el cliente | ≤40% (más significa que estamos adivinando) |
+| Cobertura del playbook con fuente | ≥65% |
+| Conversaciones reales que llegan a oferta de horario | ≥40% |
+| Conversaciones que agendan ÷ las que reciben horario | ≥30% |
+| Tiempo de compilación de punta a punta | <60 s |
+
+---
+
 ## Apéndice · Desvíos respecto al PRD original
 
 Todos deliberados, todos documentados.
@@ -380,3 +467,4 @@ Todos deliberados, todos documentados.
 | Schema `public` implícito | Schema dedicado `holaamigo` | 0001 |
 | Admin con Supabase Auth + allowlist | Contraseña + cookie HMAC firmada | 0005 |
 | Sprints de 45 días | Todo en una sesión | Instrucción del fundador |
+| Conectar WhatsApp = registrar una intención | Conectar WhatsApp = compilar el agente | 0024 |
