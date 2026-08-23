@@ -55,13 +55,17 @@ console.log('\n\x1b[1mLotes e informes · Postgres real (PGlite)\x1b[0m');
 console.log('\n\x1b[1m1 · El orden: 0015 sin 0014 falla diciendo qué falta\x1b[0m');
 
 {
-  // Todo MENOS 0014, que es la que crea `smoke_probes`. No se listan los
-  // archivos a mano: una migración nueva entre medio dejaría esta prueba
-  // probando un esquema que ya no existe.
+  // Todo lo ANTERIOR al smoke tester. No se listan los archivos a mano —una
+  // migración nueva entre medio dejaría esta prueba probando un esquema que ya
+  // no existe— y tampoco se excluyen 0014 y 0015 por nombre: cualquier
+  // migración posterior también depende de ellas y su guarda dispararía acá,
+  // haciendo fallar la prueba por el motivo correcto en el lugar equivocado.
+  // Se corta por número.
   const solo = new PGlite();
   await solo.exec(roles);
+  const numero = (f) => Number.parseInt(f.slice(0, 4), 10);
   const sinSmoke = (await readdir(carpeta))
-    .filter((f) => f.endsWith('.sql') && !f.startsWith('0014') && !f.startsWith('0015'))
+    .filter((f) => f.endsWith('.sql') && numero(f) < 14)
     .sort();
   for (const a of sinSmoke) {
     await solo.exec(await readFile(join(carpeta, a), 'utf8'));

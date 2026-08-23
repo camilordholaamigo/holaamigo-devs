@@ -116,10 +116,20 @@ Acá se aplica con una asimetría deliberada:
 Escribirle por WhatsApp a un negocio que no nos escribió primero es la acción
 más delicada que hace este producto. Los frenos, de más duro a menos:
 
-1. **`authorize()`.** `smoketest.probe` es `external_comms` con techo de
-   plataforma **4**, no 5. L5 sería «hacelo y ni lo cuentes»; L4 es «podés
-   ejecutar sin aprobación previa, queda registrado y es reversible dentro de
-   la ventana». Un número quemado por Meta no se recupera con un rollback.
+1. **`authorize()`.** `smoketest.probe` tiene techo de plataforma **4**, no 5.
+   L5 sería «hacelo y ni lo cuentes»; L4 es «podés ejecutar sin aprobación
+   previa, queda registrado y es reversible dentro de la ventana». Un número
+   quemado por Meta no se recupera con un rollback.
+
+   > **Corrección posterior.** Esta capacidad se clasificó al principio como
+   > `external_comms`, y eso la dejó **inalcanzable durante toda la primera
+   > versión**: para esa clase el plan `diagnostico` topa en 2 y la autonomía
+   > `propose` topa en 1, o sea nivel efectivo 1. El smoke tester automático no
+   > corrió nunca. La clase correcta es `self_outreach` —sale del edificio,
+   > pero el destinatario es la propia organización— y el porqué está entero en
+   > la migración `0016`. Los diales del cliente gobiernan lo que sus agentes
+   > hacen en su nombre; esto lo hacemos nosotros, sobre su propia línea, y
+   > cobrárselo a su plan es circular: la prueba existe para que compre.
 2. **Propiedad del número.** En el camino automático, el número tiene que estar
    publicado en el sitio de la organización que pidió el diagnóstico. Le
    escribimos al dueño de la línea, no a un tercero.

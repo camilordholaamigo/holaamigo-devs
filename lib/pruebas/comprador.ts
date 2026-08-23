@@ -3,6 +3,7 @@ import { CompradorTurnoSchema } from '@/lib/ai/schemas';
 import { COMPRADOR_SYSTEM } from '@/config/prompts';
 import { hasOpenAI } from '@/lib/env';
 import { blanquearCifras } from '@/lib/playbook/compile';
+import { cifrasDelPlan } from '@/lib/pruebas/guion';
 import type { Mensaje, PlanDePrueba } from '@/lib/pruebas/types';
 
 /**
@@ -46,7 +47,7 @@ export async function siguienteTurno(args: {
 }): Promise<TurnoDelComprador> {
   const { plan, conversation, turno } = args;
 
-  const permitidas = cifrasPermitidas(plan);
+  const permitidas = cifrasDelPlan(plan);
 
   if (hasOpenAI()) {
     try {
@@ -77,11 +78,6 @@ export async function siguienteTurno(args: {
   }
 
   return heuristico(plan, conversation, turno, permitidas);
-}
-
-/** Lo único que el comprador puede decir en plata: su presupuesto. */
-function cifrasPermitidas(plan: PlanDePrueba): string[] {
-  return [plan.persona.presupuesto ?? ''].filter(Boolean);
 }
 
 /**
@@ -135,6 +131,16 @@ function armarInstrucciones(plan: PlanDePrueba, conversation: Mensaje[], turno: 
     '',
     `TU OBJETIVO: ${plan.objetivo}`,
     '',
+    // Lo que el equipo escribió del negocio. Entra como «lo que sabés», no como
+    // verdad citable: no tiene fuente, así que el comprador puede apoyarse en
+    // ello para preguntar pero no para afirmar (§13.4).
+    plan.contexto ? `LO QUE SABÉS DE ELLOS:\n${plan.contexto}` : '',
+    plan.contexto
+      ? 'Eso te sirve para preguntar. NO lo cites como si lo hubieras leído en su web.\n'
+      : '',
+    // Las instrucciones ajustan el TONO. Van después del objetivo y antes de
+    // las preguntas para que no puedan reescribir ninguno de los dos.
+    plan.instrucciones ? `CÓMO TE TENÉS QUE COMPORTAR: ${plan.instrucciones}\n` : '',
     pendientes
       ? `LO QUE TODAVÍA NO PREGUNTASTE (una por mensaje, en este orden):\n${pendientes}`
       : 'Ya preguntaste todo lo que querías. Ahora empuja al objetivo o cierra.',

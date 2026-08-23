@@ -48,8 +48,9 @@ export async function GET(
     .select(
       `id, template_id, target_phone, estado, cerro_con, turno, max_turnos,
        segundos_primera_respuesta, auditoria_score, evaluacion_score, organization_id,
-       enviado_at, error,
-       smoke_targets ( nombre )`,
+       enviado_at, error, conversation, channel_id, plan,
+       smoke_targets ( nombre ),
+       smoke_channels ( label, phone_e164 )`,
     )
     .eq('batch_id', loteId)
     .order('created_at', { ascending: true })

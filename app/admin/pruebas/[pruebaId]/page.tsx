@@ -1,11 +1,12 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { db } from '@/lib/supabase/admin';
-import { Card, Badge, Empty, SourceMark } from '@/components/ui';
+import { Card, Badge, SourceMark } from '@/components/ui';
 import { AccionesDePrueba } from '@/components/pruebas-admin';
+import { ConversacionEnVivo } from '@/components/conversacion-en-vivo';
 import { formatoDuracion } from '@/lib/pruebas/motor';
 import { cn } from '@/lib/utils';
-import type { PruebaRow } from '@/lib/pruebas/types';
+import { modoDelPlan, type PruebaRow } from '@/lib/pruebas/types';
 
 /**
  * La ficha completa de una conversación de prueba.
@@ -27,14 +28,17 @@ import type { PruebaRow } from '@/lib/pruebas/types';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Prueba de línea · admin', robots: { index: false } };
+export const metadata = { title: 'Conversación de prueba · admin', robots: { index: false } };
 
 export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[pruebaId]'>) {
   const { pruebaId } = await params;
 
   const { data } = await db()
     .from('smoke_probes')
-    .select('*, smoke_targets ( nombre, organization_id, source_url, origen, bloqueado )')
+    .select(
+      `*, smoke_targets ( nombre, organization_id, source_url, origen, bloqueado ),
+          smoke_channels ( label, phone_e164 )`,
+    )
     .eq('id', pruebaId)
     .maybeSingle();
 
@@ -48,6 +52,7 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
       origen: string;
       bloqueado: boolean;
     } | null;
+    smoke_channels: { label: string; phone_e164: string } | null;
   };
 
   const plan = p.plan;
@@ -68,8 +73,12 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
             <h1 className="text-2xl font-semibold tracking-tight text-ink">
               {p.smoke_targets?.nombre ?? plan?.negocio ?? p.target_phone}
             </h1>
+            {/* Desde qué línea nuestra salió, y no solo a quién: con tres
+                líneas contra el mismo negocio hay tres conversaciones que se
+                ven idénticas si no se dice cuál es cuál (ADR 0027). */}
             <p className="tnum text-[13.5px] text-ink-faint">
-              {p.template_id} · {p.target_phone}
+              {p.target_phone}
+              {p.smoke_channels ? <> · desde {p.smoke_channels.phone_e164}</> : null}
               {p.smoke_targets?.source_url ? (
                 <SourceMark url={p.smoke_targets.source_url} />
               ) : (
@@ -96,6 +105,9 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
           <Badge tone="muted">
             turno {p.turno} de {p.max_turnos}
           </Badge>
+          <Badge tone="muted">
+            {plan && modoDelPlan(plan) === 'guion' ? 'preguntas fijas' : p.template_id}
+          </Badge>
           {plan?.degradado ? <Badge tone="leak">compilada sin modelo</Badge> : null}
           {p.smoke_targets?.bloqueado ? <Badge tone="leak">número bloqueado</Badge> : null}
         </div>
@@ -110,45 +122,20 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
         ) : null}
       </div>
 
-      {/* ── 1 · la transcripción ─────────────────────────────────────────── */}
-      <section className="space-y-3">
-        <h2 className="text-[15px] font-semibold text-ink">La conversación</h2>
-        {(p.conversation ?? []).length === 0 ? (
-          <Empty title="Todavía no hay mensajes." />
-        ) : (
-          <Card>
-            <div className="space-y-2.5 p-5">
-              {p.conversation.map((m, i) => (
-                <div
-                  key={`${m.timestamp}-${i}`}
-                  className={cn('flex', m.role === 'comprador' ? 'justify-end' : 'justify-start')}
-                >
-                  <div className="max-w-[80%] space-y-1">
-                    <p
-                      className={cn(
-                        'whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-[13.5px] leading-relaxed',
-                        m.role === 'comprador'
-                          ? 'rounded-br-sm bg-ink text-paper'
-                          : 'rounded-bl-sm bg-paper-sunken text-ink',
-                      )}
-                    >
-                      {m.text}
-                    </p>
-                    <p
-                      className={cn(
-                        'tnum text-[10.5px] text-ink-faint',
-                        m.role === 'comprador' ? 'text-right' : 'text-left',
-                      )}
-                    >
-                      {m.timestamp.slice(11, 19)}
-                    </p>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </Card>
-        )}
-      </section>
+      {/* ── 1 · la transcripción ─────────────────────────────────────────
+          Primero, y en vivo. Es lo que de verdad pasó; todo lo demás son
+          lecturas de esto, y quien va a llamar al prospecto necesita las
+          palabras, no la nota. */}
+      <ConversacionEnVivo
+        runId={p.run_id}
+        pruebaId={p.id}
+        viva={viva}
+        inicial={{
+          conversation: p.conversation ?? [],
+          turno: p.turno,
+          maxTurnos: p.max_turnos,
+        }}
+      />
 
       {/* ── 2 · el plan ──────────────────────────────────────────────────── */}
       {plan ? (
@@ -166,7 +153,34 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
                 <p className="text-[13.5px] leading-relaxed text-ink-soft">{plan.objetivo}</p>
               </Bloque>
 
-              <Bloque titulo="Lo que se preguntó">
+              {plan.contexto ? (
+                <Bloque titulo="Lo que sabíamos de ellos">
+                  <p className="whitespace-pre-wrap text-[13.5px] leading-relaxed text-ink-soft">
+                    {plan.contexto}
+                  </p>
+                  <p className="text-[12px] leading-snug text-ink-faint">
+                    Escrito por el equipo. Sin fuente verificable, así que sirvió para preguntar
+                    pero no cuenta como ficha: no se puede acusar a nadie de contradecir algo que
+                    nosotros escribimos de memoria.
+                  </p>
+                </Bloque>
+              ) : null}
+
+              {plan.instrucciones ? (
+                <Bloque titulo="Cómo se le pidió que se comportara">
+                  <p className="text-[13.5px] leading-relaxed text-ink-soft">
+                    {plan.instrucciones}
+                  </p>
+                </Bloque>
+              ) : null}
+
+              <Bloque
+                titulo={
+                  modoDelPlan(plan) === 'guion'
+                    ? 'El guion, tal como se mandó'
+                    : 'Lo que se preguntó'
+                }
+              >
                 <ul className="space-y-2">
                   {plan.sondas.map((s) => (
                     <li key={s.id} className="space-y-0.5">
@@ -175,6 +189,11 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
                         {s.origen === 'research' ? (
                           <span className="ml-2 rounded bg-money-soft px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-money">
                             del research
+                          </span>
+                        ) : null}
+                        {s.origen === 'admin' ? (
+                          <span className="ml-2 rounded bg-paper-sunken px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-faint">
+                            la escribió el equipo
                           </span>
                         ) : null}
                       </p>

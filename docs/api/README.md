@@ -619,31 +619,88 @@ Lo mismo, por SSE. Emite `estado` con el resumen completo cada vez que algo
 cambia de verdad —se compara una huella—, y `finished` cuando no queda nada
 vivo. Una conversación quieta no manda nada.
 
-### `POST /api/admin/pruebas` · `PATCH`
+### `POST /api/admin/pruebas` · `GET` · `PATCH`
 
-Crear una prueba a mano, sin diagnóstico. Solo admin.
+**La única forma de crear una prueba a mano.** Solo admin. No hace falta
+diagnóstico, ni organización, ni research: con un número y tres líneas de texto
+sale una conversación (ADR 0027).
+
+`números × líneas × guiones = conversaciones`, y el resultado trae `destino`: la
+transcripción si dio una, la pantalla de la prueba si dio más.
 
 ```jsonc
-// POST
-{ "telefono": "+57 300 123 4567", "nombre": "Ferretería El Tornillo",
-  "plantillas": ["servicio", "ventas"],
-  "organizationId": null,   // con él, compila con el research de esa org
-  "canalId": null, "contexto": null }
-→ { "ok": true, "runId": "<uuid>", "pruebas": 2 }
+// POST · el guion a medida
+{ "numeros": [{ "telefono": "+57 300 123 4567", "nombre": "Clínica Mirla" }],
+  "canales": ["<uuid de nuestra línea>", "<otra>"],   // 1–8. una conversación por línea
+  "aMedida": {
+    "modo": "conversar",              // o "guion"
+    "negocio": "Clínica Mirla",
+    "producto": "tratamientos faciales y corporales",
+    "apertura": "Hola, buenas 🙂 vi la clínica y quería preguntar una cosa",
+    "objetivo": "Saber si atienden el lunes, cuánto cuesta, y salir con una cita",
+    "preguntas": ["¿Abren los lunes?", "¿Cuánto cuesta el de manchas?"],
+    "guion": [],                      // en modo "guion", los mensajes exactos
+    "contexto": "Clínica estética en Bogotá, zona norte. No publican precios.",
+    "instrucciones": null,
+    "persona": {}, "maxTurnos": 10 },
+  "maxConcurrentes": 4, "ritmoSegundos": 45 }
+
+// POST · los moldes de fábrica, compilados con el research de cada organización
+{ "organizationIds": ["<uuid>"], "canales": ["<uuid>"],
+  "plantillas": ["servicio"], "proposito": "qa",
+  "maxConcurrentes": 4, "ritmoSegundos": 45 }
+
+→ { "ok": true, "loteId": "<uuid>", "pruebas": 3,
+    "conversaciones": ["<uuid>", "<uuid>", "<uuid>"],
+    "destino": "/admin/pruebas/lotes/<uuid>",
+    "omitidos": [] }
 
 // falta configuración: 400 con el nombre exacto
 → { "error": "Falta configurar CALLBELL_API_KEY en Vercel.",
     "falta": { "CALLBELL_API_KEY": true } }
+
+// GET ?telefono=… — lo que hay que saber ANTES de escribir
+→ { "conocido": true, "e164": "+573001234567", "nombre": "Clínica Mirla",
+    "organizationId": null, "ultimaPruebaAt": "2026-08-23T14:02:11Z",
+    "bloqueado": false, "bloqueadoMotivo": null, "fuente": null }
 
 // PATCH — cancelar, recalificar, desbloquear un número
 { "accion": "cancelar" | "reevaluar", "pruebaId": "<uuid>" }
 { "accion": "desbloquear", "targetId": "<uuid>" }
 ```
 
+El `GET` existe porque el camino manual **no tiene enfriamiento** a propósito
+(ADR 0027, decisión 5): la contrapartida acordada es que el operador vea que le
+escribimos hace doce minutos antes de volver a hacerlo. Un freno que decide una
+persona informada es mejor que uno automático que la deja sin poder retestear al
+cliente al que le acaba de cambiar el prompt.
+
+### `POST /api/admin/pruebas/redactar`
+
+El **borrador** de un guion, a partir de dos líneas escritas a las apuradas. Solo
+admin.
+
+```jsonc
+{ "negocio": "Clínica Mirla", "producto": "tratamientos faciales",
+  "brief": "clínica estética en Bogotá, quiero saber si abren el lunes y cuánto cuesta el de manchas" }
+→ { "apertura": "...", "objetivo": "...", "preguntas": ["...", "..."],
+    "degradado": false }
+```
+
+**Devuelve texto para un formulario, no una prueba.** Lo que se manda por WhatsApp
+es lo que quedó escrito en los campos después de que una persona los leyó — misma
+frontera de ADR 0024.
+
+**Nunca falla hacia afuera.** Sin `OPENAI_API_KEY`, o si el modelo se cae, devuelve
+las sugerencias determinísticas de `guion.ts` con `degradado: true` y un `motivo`.
+Un botón de ayuda que rompe el formulario cuando falla es peor que no tenerlo.
+
 ### `POST /api/admin/pruebas/canales` · `DELETE`
 
-Nuestra línea: número y `channel_uuid` de Callbell, editables sin desplegar. El
-`DELETE` apaga, no borra: las pruebas viejas la referencian.
+Nuestras líneas: número y `channel_uuid` de Callbell de cada una, editables sin
+desplegar. **Varias líneas es la unidad de escala**: cada una abre su propio hilo
+de WhatsApp. El `DELETE` apaga, no borra: las conversaciones viejas la
+referencian.
 
 ### `POST /api/admin/pruebas/plantillas` · `DELETE`
 
@@ -676,25 +733,16 @@ caracteres no enumerable, igual que el diagnóstico.
 Cada apertura incrementa `smoke_reports.vistas` y emite `smoke_report_viewed`.
 Eso no es telemetría: es la señal que decide a quién llamar.
 
-### `POST /api/admin/pruebas/lotes`
+### ~~`POST /api/admin/pruebas/lotes`~~ · eliminado en ADR 0027
 
-Arrancar una tanda. Solo admin.
+Era el segundo camino de creación y hacía casi lo mismo que
+`POST /api/admin/pruebas` con otras palabras. Tener dos era la mitad de la
+confusión que ADR 0027 vino a arreglar, así que **hay una prueba que verifica que
+no vuelva** (`scripts/test-smoke-tester.mjs`, §8).
 
-```jsonc
-{ "nombre": "QA de septiembre",
-  "proposito": "qa",              // gobierna qué frenos aplican
-  "plantillas": ["servicio"],
-  "organizationIds": ["<uuid>"],  // los números salen de smoke_targets
-  "objetivos": [{ "telefono": "+57300…" }],   // …o a mano; se deduplica
-  "maxConcurrentes": 4,           // 1–12. NO es afinación: ver ADR 0026
-  "ritmoSegundos": 45 }
-
-→ { "ok": true, "loteId": "<uuid>", "pruebas": 30,
-    "omitidos": [{ "telefono": "+57…", "motivo": "pidió que no le escribiéramos" }] }
-```
-
-`omitidos` viene **siempre**, también en el 400. Un lote que dice «no se pudo»
-sin decir qué pasó con cada línea es un lote que nadie vuelve a usar.
+`omitidos` sigue viniendo **siempre** en la respuesta del endpoint que quedó,
+también en el 400. Una prueba que dice «no se pudo» sin decir qué pasó con cada
+línea es una prueba que nadie vuelve a usar.
 
 ### `GET /api/admin/pruebas/lotes/[loteId]` · `PATCH`
 

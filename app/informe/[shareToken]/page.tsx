@@ -375,7 +375,7 @@ function Cifra({
 /**
  * Las barras de tiempo.
  *
- * La escala es LINEAL contra el peor tiempo de la tanda, no logarítmica. Con
+ * La escala es LINEAL contra el peor tiempo de la prueba, no logarítmica. Con
  * una conversación de 2 minutos y otra de 40, la primera queda como una
  * astilla — y esa astilla ES la información: la diferencia entre las dos es el
  * problema del que estamos hablando. Comprimirla para que «se vean bien las

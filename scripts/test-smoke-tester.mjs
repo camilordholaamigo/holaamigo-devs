@@ -497,6 +497,181 @@ console.log('\n\x1b[1m6 · Las invariantes del código\x1b[0m');
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+console.log('\n\x1b[1m7 · La prueba a medida y las varias líneas (0017)\x1b[0m');
+
+{
+  // (a) Los dos moldes semilla. `smoke_probes.template_id` es clave foránea, así
+  //     que sin estas filas una prueba escrita a mano no se puede insertar — y
+  //     el síntoma sería un 23503 en el momento de mandar, no antes.
+  const { rows: moldes } = await db.query(
+    `select id, max_turnos, jsonb_array_length(rubrica) as criterios
+       from holaamigo.smoke_templates
+      where id in ('a-medida', 'guion')
+      order by id`,
+  );
+  check(
+    'los moldes a-medida y guion existen',
+    moldes.length === 2,
+    JSON.stringify(moldes.map((m) => m.id)),
+  );
+  check(
+    'y traen rúbrica: sin criterios, la auditoría no tendría nada que verificar',
+    moldes.every((m) => m.criterios >= 4),
+    JSON.stringify(moldes),
+  );
+
+  // (b) `dio_precio` NO está en la rúbrica de los dos moldes a medida. Es
+  //     binario y no sabe si se llegó a preguntar por plata: reprobar a un
+  //     negocio por no dar un precio que nadie le pidió es inventar un
+  //     resultado, que es lo único que este producto no se puede permitir.
+  const { rows: precio } = await db.query(
+    `select count(*)::int as n
+       from holaamigo.smoke_templates t,
+            jsonb_array_elements(t.rubrica) c
+      where t.id in ('a-medida', 'guion') and c->>'chequeo' = 'dio_precio'`,
+  );
+  check('ningún molde a medida reprueba por no dar un precio que nadie pidió', precio[0].n === 0);
+
+  // (c) Los índices por par (nuestra línea, su número). Son los que hacen que
+  //     «¿está ocupado este hilo?» siga costando lo mismo con varias líneas.
+  const { rows: idx } = await db.query(
+    `select indexname from pg_indexes
+      where schemaname = 'holaamigo'
+        and indexname in ('smoke_probes_linea_idx', 'smoke_probes_awaiting_linea_idx')`,
+  );
+  check('los dos índices por par (línea, número) existen', idx.length === 2, JSON.stringify(idx));
+
+  // (d) Dos de nuestras líneas contra el MISMO número tienen que poder convivir.
+  //     Es la capacidad entera de ADR 0027, y si algún día alguien le pone un
+  //     índice único a (target_phone) donde no va, esto lo agarra.
+  const { rows: canal2 } = await db.query(
+    `insert into holaamigo.smoke_channels (label, provider, phone_e164, channel_uuid)
+     values ('Callbell · línea 2', 'callbell', '+573001119999', 'canal-de-prueba-2')
+     returning id`,
+  );
+  const { rows: canal1 } = await db.query(
+    `select id from holaamigo.smoke_channels where channel_uuid = '124902a5f0fa43289fe1fa7a4c23fe0d'`,
+  );
+  const { rows: t } = await db.query(
+    `insert into holaamigo.smoke_targets (nombre, phone_e164, origen)
+     values ('Mirla', '+573002221100', 'manual') returning id`,
+  );
+  const { rows: r } = await db.query(
+    `insert into holaamigo.smoke_runs (origen, estado) values ('manual', 'running') returning id`,
+  );
+
+  let convivencia = null;
+  try {
+    for (const canalId of [canal1[0].id, canal2[0].id]) {
+      await db.query(
+        `insert into holaamigo.smoke_probes
+           (run_id, target_id, template_id, channel_id, target_phone, plan, estado, awaiting_reply)
+         values ($1, $2, 'a-medida', $3, '+573002221100', '{}'::jsonb, 'running', true)`,
+        [r[0].id, t[0].id, canalId],
+      );
+    }
+  } catch (err) {
+    convivencia = err.message;
+  }
+  check(
+    'dos líneas nuestras pueden tener una conversación viva contra el mismo número',
+    convivencia === null,
+    convivencia ?? '',
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n\x1b[1m8 · Las invariantes del código que trajo 0017\x1b[0m');
+
+{
+  const leer = (rel) => readFile(join(raiz, rel), 'utf8');
+
+  // (a) La cola y la cancelación son por par. Sin el canal, arrancar la
+  //     conversación de la línea B cancelaba la de la línea A contra el mismo
+  //     negocio — que es exactamente lo que se quiere permitir.
+  const motor = await leer('lib/pruebas/motor.ts');
+  check(
+    'avanzarCola recibe el canal: la cola es por par (línea, número)',
+    /export async function avanzarCola\([\s\S]{0,600}?canalId: string,/.test(motor),
+  );
+  check(
+    'y filtra por channel_id al buscar lo vivo y lo pendiente',
+    (motor.match(/\.eq\('channel_id', canalId\)/g) ?? []).length >= 3,
+  );
+  check(
+    'cancelarVivasContra recibe el canal',
+    /export async function cancelarVivasContra\([\s\S]{0,900}?canalId: string \| null,/.test(motor),
+  );
+
+  // (b) En modo guion los detectores de cierre NO paran la prueba. Si el negocio
+  //     agenda en el mensaje dos, las preguntas tres y cuatro se mandan igual:
+  //     es lo que pidió el que armó el guion y es lo que hace comparables veinte
+  //     conversaciones. Se verifica por posición porque es una invariante de
+  //     ORDEN, y un refactor que mueva la rama la rompe sin cambiar una línea.
+  check(
+    'la rama del guion corre antes de los detectores de cierre',
+    motor.indexOf("modoDelPlan(plan) === 'guion'") <
+      motor.indexOf('const cierre = detectarCierreDeNegocio(bloque)'),
+  );
+  check(
+    'y el guion no llama al comprador: el mensaje siguiente ya está escrito',
+    /async function avanzarGuion\([\s\S]*?\n\}/.test(motor) &&
+      !/async function avanzarGuion\([\s\S]*?siguienteTurno\(/.test(
+        motor.slice(motor.indexOf('async function avanzarGuion')),
+      ),
+  );
+
+  // (c) `guion.ts` tiene que poder correr en el navegador: la vista previa del
+  //     formulario muestra lo que se va a mandar usando las MISMAS funciones que
+  //     arman el plan en el servidor. Un import de base de datos acá haría que
+  //     el preview se calcule distinto de lo que se manda, y una pantalla que
+  //     miente es peor que no tener pantalla.
+  const guion = await leer('lib/pruebas/guion.ts');
+  check(
+    'guion.ts no importa nada de servidor: la vista previa usa las mismas funciones',
+    !/supabase|runStructured|@\/lib\/ai|process\.env/.test(guion),
+  );
+  // Se busca el IMPORT y no la palabra: el encabezado del archivo explica con
+  // nombre y paréntesis por qué la red de cifras no corre acá, y una prueba que
+  // se rompe porque alguien documentó su propia decisión enseña a no documentar.
+  check(
+    'y no le pasa blanquearCifras al texto del operador',
+    !/^import[^;]*blanquearCifras/m.test(guion),
+  );
+
+  // (d) La correlación desambigua entre líneas, y cuando no puede lo DICE. El
+  //     log a ciegas es lo único que va a resolver el incidente el día que dos
+  //     conversaciones simultáneas contra el mismo negocio cruzen un mensaje.
+  const correlacion = await leer('lib/pruebas/webhook.ts');
+  check(
+    'la correlación desambigua por channel_uuid cuando hay varias candidatas',
+    /entrante\.canalUuid/.test(correlacion) && /porLinea\(/.test(correlacion),
+  );
+  check(
+    'y deja escrito en el log cuando desambigua a ciegas',
+    /desambiguaci[oó]n a ciegas/.test(correlacion),
+  );
+  check(
+    'porLinea nunca devuelve vacío: perder el entrante cuelga la conversación',
+    /if \(porCanal\.length > 0\) return/.test(correlacion) &&
+      /return \{ coinciden: candidatas, aCiegas: true \}/.test(correlacion),
+  );
+
+  // (e) Un solo camino para crear una prueba a mano. Tener dos endpoints que
+  //     hacían casi lo mismo con palabras distintas era la mitad del problema.
+  let sobrevive = false;
+  try {
+    await leer('app/api/admin/pruebas/lotes/route.ts');
+    sobrevive = true;
+  } catch {
+    sobrevive = false;
+  }
+  check('el POST de lotes ya no existe: hay un solo camino de creación', !sobrevive);
+  const lanzar = await leer('lib/pruebas/lanzar.ts');
+  check('y lanzarDesdeAdmin se fue de lanzar.ts', !/export async function lanzarDesdeAdmin/.test(lanzar));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 console.log(
   failures === 0
     ? '\n\x1b[32m\x1b[1mEl smoke tester aplica limpio y respeta sus invariantes.\x1b[0m\n'

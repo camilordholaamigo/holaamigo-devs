@@ -1,14 +1,38 @@
 import { db, mustWrite, tryWrite, unwrap } from '@/lib/supabase/admin';
 import { track } from '@/lib/events';
 import { authorize } from '@/lib/governance/authorize';
-import { canalActivo, hayTransporte } from '@/lib/pruebas/callbell';
-import { compilarPrueba, plantilla } from '@/lib/pruebas/compilar';
+import { canalActivo, canalesActivos, hayTransporte } from '@/lib/pruebas/callbell';
+import {
+  compilarPrueba,
+  contextoDelNegocio,
+  plantilla,
+  resolverRubrica,
+} from '@/lib/pruebas/compilar';
+import { moldeDelModo, planALaMedida, validarAMedida, type EntradaAMedida } from '@/lib/pruebas/guion';
 import { arrancarPrueba, cancelarVivasContra } from '@/lib/pruebas/motor';
 import { aE164 } from '@/lib/pruebas/numeros';
-import type { PlanDePrueba, TargetRow } from '@/lib/pruebas/types';
+import type { CanalRow, HechoDeReferencia, PlanDePrueba, TargetRow } from '@/lib/pruebas/types';
 
 /**
- * El lote: la misma batería contra muchas líneas, con freno.
+ * El lote — en pantalla, LA PRUEBA: un guion contra N números desde M líneas.
+ *
+ * ── QUÉ ES UNA PRUEBA ──────────────────────────────────────────────────────
+ *
+ * Un guion, una lista de números y una lista de NUESTRAS líneas. El producto
+ * cartesiano son las conversaciones, y eso es todo el modelo (ADR 0027):
+ *
+ *     1 número × 1 línea   una conversación suelta
+ *     1 número × 3 líneas  tres clientes distintos escribiéndole a la vez
+ *    30 números × 1 línea  el barrido de prospección
+ *    30 números × 3 líneas lo mismo, tres veces más rápido
+ *
+ * Hasta ADR 0026 esto se llamaba «tanda» y solo modelaba la tercera fila. El
+ * nombre describía el diseño viejo y por eso nadie entendía qué hacía el botón.
+ *
+ * El guion viene de uno de dos lugares, y al motor le da exactamente igual:
+ *
+ *     `plantillas`  moldes compilados contra el research (`compilar.ts`)
+ *     `aMedida`     un plan escrito a mano en /admin/pruebas/nueva (`guion.ts`)
  *
  * ── POR QUÉ EL TOPE NO ES AFINACIÓN ────────────────────────────────────────
  *
@@ -76,6 +100,15 @@ export interface ObjetivoDeLote {
   nombre: string | null;
 }
 
+/**
+ * Una unidad de guion dentro de la prueba.
+ *
+ * `molde` compila contra el research; `a-medida` usa el plan que escribió el
+ * operador. Se modelan como un tipo y no como dos caminos paralelos porque río
+ * abajo son lo mismo: un `PlanDePrueba` por (objetivo × unidad).
+ */
+type Unidad = { tipo: 'molde'; templateId: string } | { tipo: 'a-medida' };
+
 // ═══════════════════════════════════════════════════════════════════════════
 // CREAR
 // ═══════════════════════════════════════════════════════════════════════════
@@ -83,6 +116,14 @@ export interface ObjetivoDeLote {
 export interface ResultadoLote {
   loteId: string | null;
   pruebas: number;
+  /**
+   * Los ids de las conversaciones creadas, en orden de arranque.
+   *
+   * Con una sola, la pantalla siguiente es la transcripción y no el grupo. Es la
+   * mitad de la decisión 6 de ADR 0027: una herramienta que no deja ver lo que
+   * acaba de hacer no se vuelve a usar.
+   */
+  conversaciones: string[];
   omitidos: Array<{ telefono: string; motivo: string }>;
   error?: string;
 }
@@ -91,33 +132,65 @@ export async function crearLote(args: {
   nombre: string;
   proposito: 'qa' | 'prospeccion';
   objetivos: ObjetivoDeLote[];
-  plantillas: string[];
+  /**
+   * Desde qué líneas nuestras. Una conversación por (objetivo × línea).
+   *
+   * Vacío o nulo = la primera activa, que es el comportamiento de siempre y el
+   * que usa el camino automático del diagnóstico.
+   */
+  canales?: string[] | null;
+  /** Camino A · moldes compilados contra el research de cada objetivo. */
+  plantillas?: string[] | null;
+  /** Camino B · el plan que escribió una persona. Excluye `plantillas`. */
+  aMedida?: EntradaAMedida | null;
   maxConcurrentes: number;
   ritmoSegundos: number;
-  canalId: string | null;
   creadoPor: string;
   notas?: string | null;
 }): Promise<ResultadoLote> {
-  if (!hayTransporte()) {
-    return { loteId: null, pruebas: 0, omitidos: [], error: 'Falta CALLBELL_API_KEY.' };
+  const vacio = (error: string, omitidos: ResultadoLote['omitidos'] = []): ResultadoLote => ({
+    loteId: null,
+    pruebas: 0,
+    conversaciones: [],
+    omitidos,
+    error,
+  });
+
+  if (!hayTransporte()) return vacio('Falta CALLBELL_API_KEY.');
+
+  // ── 1 · desde qué líneas ───────────────────────────────────────────────
+  const canales = await resolverCanales(args.canales);
+  if (canales.length === 0) {
+    return vacio(
+      'No hay ninguna línea activa desde la que escribir. Configurá una en «Nuestras líneas».',
+    );
   }
 
-  const canal = await canalActivo(args.canalId);
-  if (!canal) {
-    return { loteId: null, pruebas: 0, omitidos: [], error: 'No hay ningún canal activo.' };
+  // ── 2 · qué se manda ──────────────────────────────────────────────────
+  //
+  // Se valida ACÁ y no solo en el cliente. La petición del cliente es un dato de
+  // entrada, y del otro lado del botón hay mensajes de WhatsApp reales.
+  if (args.aMedida) {
+    const problema = validarAMedida(args.aMedida);
+    if (problema) return vacio(problema);
+  }
+  const unidades: Unidad[] = args.aMedida
+    ? [{ tipo: 'a-medida' }]
+    : (args.plantillas ?? []).map((templateId) => ({ tipo: 'molde' as const, templateId }));
+
+  if (unidades.length === 0) {
+    return vacio('Elegí al menos un tipo de prueba, o escribí un guion.');
   }
 
+  // ── 3 · a quién ───────────────────────────────────────────────────────
   const omitidos: ResultadoLote['omitidos'] = [];
   const objetivos = await resolverObjetivos(args.objetivos, args.proposito, omitidos);
 
   if (objetivos.length === 0) {
-    return {
-      loteId: null,
-      pruebas: 0,
-      omitidos,
-      error: 'Ningún número quedó disponible. Revisá los motivos.',
-    };
+    return vacio('Ningún número quedó disponible. Revisá los motivos.', omitidos);
   }
+
+  const previsto = objetivos.length * unidades.length * canales.length;
 
   const { data: lote, error } = await db()
     .from('smoke_batches')
@@ -133,7 +206,11 @@ export async function crearLote(args: {
         {
           t: new Date().toISOString(),
           step: 'inicio',
-          detail: `${objetivos.length} línea${objetivos.length === 1 ? '' : 's'} · ${args.plantillas.length} prueba${args.plantillas.length === 1 ? '' : 's'} cada una`,
+          detail:
+            `${objetivos.length} ${plural(objetivos.length, 'número', 'números')}` +
+            ` x ${canales.length} ${plural(canales.length, 'línea', 'líneas')}` +
+            ` x ${unidades.length} ${plural(unidades.length, 'guion', 'guiones')}` +
+            ` = ${previsto} ${plural(previsto, 'conversación', 'conversaciones')}`,
         },
       ],
     })
@@ -141,37 +218,33 @@ export async function crearLote(args: {
     .single();
 
   if (error || !lote) {
-    return { loteId: null, pruebas: 0, omitidos, error: error?.message ?? 'no se pudo crear el lote' };
+    return vacio(error?.message ?? 'no se pudo crear la prueba', omitidos);
   }
 
-  // Compilar es lo caro: una llamada al modelo por (objetivo × plantilla). Van
-  // en paralelo porque son independientes, y si una falla se omite ese par en
-  // vez de tumbar el lote entero — un lote de treinta clientes que muere en el
-  // cuarto por un research incompleto no sirve para nada.
+  // ── 4 · compilar ──────────────────────────────────────────────────────
+  //
+  // Un plan por (objetivo × unidad), NO por línea: las tres líneas mandan el
+  // mismo guion, que es justamente lo que hace comparables las tres respuestas.
+  // Van en paralelo porque son independientes, y si una falla se omite ese par
+  // en vez de tumbar la prueba entera — treinta clientes que mueren en el cuarto
+  // por un research incompleto no sirven para nada.
   const compilados = (
     await Promise.all(
       objetivos.flatMap((target) =>
-        args.plantillas.map(async (templateId) => {
+        unidades.map(async (unidad) => {
           try {
-            const molde = await plantilla(templateId);
-            const plan = await compilarPrueba({
-              plantilla: molde,
-              organizationId: target.organization_id,
-              nombreObjetivo: target.nombre,
-            });
-            return { target, templateId, plan };
+            const plan = await compilarUnidad(unidad, target, args.aMedida ?? null);
+            return { target, plan };
           } catch (err) {
-            console.error(`[lote] no se pudo compilar ${templateId} para ${target.phone_e164}`, err);
-            omitidos.push({
-              telefono: target.phone_e164,
-              motivo: `no se pudo compilar ${templateId}`,
-            });
+            const que = unidad.tipo === 'molde' ? unidad.templateId : 'el guion a medida';
+            console.error(`[lote] no se pudo compilar ${que} para ${target.phone_e164}`, err);
+            omitidos.push({ telefono: target.phone_e164, motivo: `no se pudo compilar ${que}` });
             return null;
           }
         }),
       ),
     )
-  ).filter((c): c is { target: TargetRow; templateId: string; plan: PlanDePrueba } => c !== null);
+  ).filter((c): c is { target: TargetRow; plan: PlanDePrueba } => c !== null);
 
   if (compilados.length === 0) {
     await tryWrite(
@@ -181,12 +254,18 @@ export async function crearLote(args: {
         .eq('id', lote.id),
       'smoke_batches.sin_pruebas',
     );
-    return { loteId: lote.id, pruebas: 0, omitidos, error: 'No se pudo compilar ninguna prueba.' };
+    return {
+      loteId: lote.id,
+      pruebas: 0,
+      conversaciones: [],
+      omitidos,
+      error: 'No se pudo compilar ninguna prueba.',
+    };
   }
 
-  // Un solo run por lote: el `run` agrupa lo que el cliente ve en su informe y
-  // el `batch` lo que nosotros vemos en la pantalla de operación. Son dos
-  // preguntas distintas sobre las mismas filas.
+  // Un solo run por organización: el `run` agrupa lo que el cliente ve en su
+  // informe y el `batch` lo que nosotros vemos en la pantalla de operación. Son
+  // dos preguntas distintas sobre las mismas filas.
   const porOrg = new Map<string | null, string>();
   for (const { target } of compilados) {
     if (porOrg.has(target.organization_id)) continue;
@@ -202,38 +281,127 @@ export async function crearLote(args: {
     if (run) porOrg.set(target.organization_id, run.id);
   }
 
+  // ── 5 · el producto cartesiano ────────────────────────────────────────
+  //
+  // El orden importa y no es cosmético. `avanzarLote` arranca en orden de
+  // creación, así que agrupando por OBJETIVO —y no por línea— un tope de
+  // concurrencia de 3 abre las tres líneas contra el primer negocio antes de
+  // pasar al segundo. Eso da dos cosas: es exactamente el escenario que se
+  // quiere medir cuando hay varias líneas, y en un barrido de treinta hace que
+  // el primer negocio esté completo y legible en minutos en vez de al final.
   const filas = compilados
     .filter(({ target }) => porOrg.has(target.organization_id))
-    .map(({ target, templateId, plan }) => ({
-      run_id: porOrg.get(target.organization_id)!,
-      batch_id: lote.id,
-      target_id: target.id,
-      template_id: templateId,
-      channel_id: canal.id,
-      organization_id: target.organization_id,
-      target_phone: target.phone_e164,
-      plan,
-      max_turnos: plan.max_turnos,
-      estado: 'pending' as const,
-    }));
+    .flatMap(({ target, plan }) =>
+      canales.map((canal) => ({
+        run_id: porOrg.get(target.organization_id)!,
+        batch_id: lote.id,
+        target_id: target.id,
+        template_id: plan.template_id,
+        channel_id: canal.id,
+        organization_id: target.organization_id,
+        target_phone: target.phone_e164,
+        plan,
+        max_turnos: plan.max_turnos,
+        estado: 'pending' as const,
+      })),
+    );
 
-  await mustWrite(db().from('smoke_probes').insert(filas), 'smoke_probes.lote');
+  // `mustWrite` devuelve el `data` pelado, no el sobre `{ data }`. Con
+  // `.select('id')` eso es el arreglo de las filas insertadas, y es lo que
+  // permite caer en la transcripción cuando hay una sola conversación.
+  const creadas = await mustWrite(
+    db().from('smoke_probes').insert(filas).select('id'),
+    'smoke_probes.lote',
+  );
 
-  await progresoDeLote(lote.id, 'compilado', `${filas.length} pruebas listas para arrancar`);
+  await progresoDeLote(
+    lote.id,
+    'compilado',
+    `${filas.length} ${plural(filas.length, 'conversación lista', 'conversaciones listas')} para arrancar`,
+  );
 
   await track('smoke_batch_started', {
     props: {
       proposito: args.proposito,
+      modo: args.aMedida ? args.aMedida.modo : 'molde',
       pruebas: filas.length,
-      lineas: objetivos.length,
+      lineas: canales.length,
+      numeros: objetivos.length,
       max_concurrentes: args.maxConcurrentes,
     },
   });
 
   await avanzarLote(lote.id);
 
-  return { loteId: lote.id, pruebas: filas.length, omitidos };
+  return {
+    loteId: lote.id,
+    pruebas: filas.length,
+    conversaciones: ((creadas ?? []) as Array<{ id: string }>).map((r) => r.id),
+    omitidos,
+  };
 }
+
+/** Un plan, venga del molde o del formulario. Al motor le da igual. */
+async function compilarUnidad(
+  unidad: Unidad,
+  target: TargetRow,
+  aMedida: EntradaAMedida | null,
+): Promise<PlanDePrueba> {
+  if (unidad.tipo === 'molde') {
+    const molde = await plantilla(unidad.templateId);
+    return compilarPrueba({
+      plantilla: molde,
+      organizationId: target.organization_id,
+      nombreObjetivo: target.nombre,
+    });
+  }
+
+  if (!aMedida) throw new Error('falta el guion a medida');
+
+  const molde = await plantilla(moldeDelModo(aMedida.modo));
+
+  // Si el número está vinculado a una organización con research, la ficha entra
+  // igual y la prueba a medida gana la capa de exactitud gratis. Sin research la
+  // ficha queda vacía, `cobertura` lo dice, y la prueba mide atención pero no
+  // invenciones. Degradar honestamente en vez de fallar es lo que mantiene el
+  // arnés vivo (§13.4).
+  let ficha: HechoDeReferencia[] = [];
+  if (target.organization_id) {
+    const ctx = await contextoDelNegocio(target.organization_id).catch(() => null);
+    ficha = ctx?.ficha ?? [];
+  }
+
+  return planALaMedida({
+    entrada: {
+      ...aMedida,
+      // El nombre del formulario manda. Solo si viene vacío se cae al que ya
+      // conocíamos del número: es un lote de treinta y nadie escribió treinta
+      // nombres a mano.
+      negocio: aMedida.negocio.trim() || target.nombre || target.phone_e164,
+    },
+    rubrica: resolverRubrica(molde.rubrica, ficha),
+    ficha,
+  });
+}
+
+/**
+ * Las líneas desde las que se va a escribir.
+ *
+ * Sin ids, la primera activa — que es el comportamiento de siempre. Con ids, se
+ * filtran contra las activas: una línea desactivada no manda nada, y silenciar
+ * eso dejaría una prueba entera en `pending` sin decir por qué.
+ */
+async function resolverCanales(ids?: string[] | null): Promise<CanalRow[]> {
+  if (!ids || ids.length === 0) {
+    const uno = await canalActivo();
+    return uno ? [uno] : [];
+  }
+  const activas = await canalesActivos();
+  const pedidas = new Set(ids);
+  return activas.filter((c) => pedidas.has(c.id));
+}
+
+const plural = (n: number, uno: string, varios: string) => (n === 1 ? uno : varios);
 
 /**
  * Filtra los objetivos y deja escrito por qué se cayó cada uno.
@@ -360,15 +528,25 @@ export async function avanzarLote(loteId: string): Promise<{ arrancadas: number 
     const siguiente = await siguientePendiente(loteId);
     if (!siguiente) break;
 
-    // Serial por número lo garantiza el motor; acá se garantiza que no
-    // arranquemos una prueba contra una línea que ya tiene otra viva de otro
-    // lote. Dos conversaciones en el mismo hilo de WhatsApp no miden nada.
-    await cancelarVivasContra(siguiente.target_phone, siguiente.run_id);
+    // Serial por par (nuestra línea, su número) lo garantiza el motor; acá se
+    // garantiza que no arranquemos en un hilo que ya tiene otra conversación
+    // viva de otro lote. Se pasa el canal: cancelar por número solo cancelaría
+    // la conversación de otra de nuestras líneas contra el mismo negocio, que es
+    // exactamente lo que ADR 0027 quiere permitir.
+    await cancelarVivasContra(
+      siguiente.target_phone,
+      siguiente.channel_id,
+      siguiente.run_id,
+    );
 
     const r = await arrancarPrueba(siguiente.id);
     if (r.ok) {
       arrancadas += 1;
-      await progresoDeLote(loteId, 'arranque', `Escribimos a ${siguiente.target_phone}`);
+      await progresoDeLote(
+        loteId,
+        'arranque',
+        `Le escribimos a ${siguiente.target_phone} desde ${siguiente.desde}`,
+      );
     }
   }
 
@@ -376,33 +554,65 @@ export async function avanzarLote(loteId: string): Promise<{ arrancadas: number 
 }
 
 /**
- * La siguiente pendiente cuya línea esté libre.
+ * La siguiente pendiente cuyo HILO esté libre.
  *
- * El filtro por línea ocupada se hace en la aplicación y no en SQL porque son
- * dos consultas chicas contra índices parciales, y la alternativa —un `not
- * exists` correlacionado sobre `smoke_probes`— no puede usar el índice parcial
- * de `estado in ('pending','running')` y termina barriendo la tabla entera
- * cuando haya historial.
+ * Un hilo es el par (nuestra línea, su número). Desde ADR 0027 la ocupación se
+ * mira por par y no por número: tres de nuestras líneas escribiéndole al mismo
+ * negocio son tres hilos distintos, y bloquear por número dejaría dos de las
+ * tres esperando para siempre a una conversación que nunca las libera.
+ *
+ * El filtro se hace en la aplicación y no en SQL porque son dos consultas chicas
+ * contra índices parciales, y la alternativa —un `not exists` correlacionado
+ * sobre `smoke_probes`— no puede usar el índice parcial de
+ * `estado in ('pending','running')` y termina barriendo la tabla entera cuando
+ * haya historial.
  */
-async function siguientePendiente(
-  loteId: string,
-): Promise<{ id: string; target_phone: string; run_id: string } | null> {
+interface Pendiente {
+  id: string;
+  target_phone: string;
+  run_id: string;
+  channel_id: string;
+  /** El número nuestro, para el registro. Sin esto el log dice tres veces lo
+   *  mismo y no se puede saber qué línea abrió qué conversación. */
+  desde: string;
+}
+
+async function siguientePendiente(loteId: string): Promise<Pendiente | null> {
   const { data: ocupadas } = await db()
     .from('smoke_probes')
-    .select('target_phone')
+    .select('target_phone, channel_id')
     .eq('estado', 'running');
 
-  const bloqueadas = new Set((ocupadas ?? []).map((o) => o.target_phone));
+  const hilo = (canalId: string, telefono: string) => `${canalId}:${telefono}`;
+  const bloqueados = new Set(
+    (ocupadas ?? []).map((o) => hilo(o.channel_id, o.target_phone)),
+  );
 
   const { data: pendientes } = await db()
     .from('smoke_probes')
-    .select('id, target_phone, run_id')
+    .select('id, target_phone, run_id, channel_id, smoke_channels ( phone_e164 )')
     .eq('batch_id', loteId)
     .eq('estado', 'pending')
     .order('created_at', { ascending: true })
-    .limit(60);
+    .limit(120);
 
-  return (pendientes ?? []).find((p) => !bloqueadas.has(p.target_phone)) ?? null;
+  const libre = ((pendientes ?? []) as unknown as Array<{
+    id: string;
+    target_phone: string;
+    run_id: string;
+    channel_id: string;
+    smoke_channels: { phone_e164: string } | null;
+  }>).find((p) => !bloqueados.has(hilo(p.channel_id, p.target_phone)));
+
+  return libre
+    ? {
+        id: libre.id,
+        target_phone: libre.target_phone,
+        run_id: libre.run_id,
+        channel_id: libre.channel_id,
+        desde: libre.smoke_channels?.phone_e164 ?? 'nuestra línea',
+      }
+    : null;
 }
 
 export async function cerrarLoteSiTerminó(loteId: string): Promise<void> {

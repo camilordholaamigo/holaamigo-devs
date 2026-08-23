@@ -85,6 +85,17 @@ const TITULOS: Record<string, { titulo: string; que_mide: string }> = {
     titulo: 'Ventas',
     que_mide: 'Le escribimos como un comprador listo para comprar.',
   },
+  // Los dos moldes a medida de ADR 0027. El título es genérico a propósito: lo
+  // que hace específica a una de estas pruebas es el guion que escribió una
+  // persona, y ése ya se muestra completo en la pantalla de la conversación.
+  'a-medida': {
+    titulo: 'Atención al cliente',
+    que_mide: 'Le escribimos como un cliente y dejamos que la conversación llegue hasta donde llegue.',
+  },
+  guion: {
+    titulo: 'Las mismas preguntas',
+    que_mide: 'Le hicimos las mismas preguntas que a todos los demás, para poder comparar.',
+  },
 };
 
 export async function resumenDeCorrida(runId: string): Promise<ResumenDeCorrida | null> {

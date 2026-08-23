@@ -459,9 +459,24 @@ pero ya no preguntando a mano.
 ## 16 · v4 — El smoke tester
 
 **Estado:** construido. Fase 1 en [ADR 0025](adr/0025-el-smoke-tester-como-evidencia.md),
-fase 2 en [ADR 0026](adr/0026-el-lote-y-el-informe.md).
+fase 2 en [ADR 0026](adr/0026-el-lote-y-el-informe.md),
+fase 3 en [ADR 0027](adr/0027-la-prueba-a-medida-y-las-lineas.md).
 Cómo funciona: [wiki/23](wiki/23-smoke-tester.md) y [wiki/24](wiki/24-lotes-e-informes.md).
 Contrato del código: [`docs/api/pruebas.md`](api/pruebas.md).
+
+**Cambio de alcance en la fase 3, y es el que más mueve el negocio:** el smoke
+tester dejó de ser *una parte del diagnóstico* y pasó a ser *una herramienta*.
+Apunta a **cualquier número** sin que el negocio exista en nuestra base y sin
+research previo, y eso lo saca de §7 y lo pone al lado de §14: no es solo lo que
+cierra un diagnóstico, es con qué se abre una conversación de venta.
+
+Lo que eso habilita, y no es teórico:
+
+- **Diagnosticar prospectos activos.** «Le escribimos a su línea a las 2:03.»
+- **Generar prospectos.** El hallazgo *es* el gancho de la llamada.
+- **Auditar bots ajenos a escala.** Hay millones de negocios con una IA
+  contestando su WhatsApp y ninguna certeza de que funcione. Treinta segundos por
+  número, cero preparación.
 
 ### 16.1 La tesis
 
@@ -487,7 +502,7 @@ resolvieron acá en el diseño y no como parche:
 
 | Deuda del original | Cómo quedó |
 |---|---|
-| Correlación contra «la conversación activa más reciente» | **Por número** (`target_phone` denormalizado) — permite probar N líneas en paralelo |
+| Correlación contra «la conversación activa más reciente» | **Por el par (nuestra línea, su número)** — permite probar N negocios en paralelo, y N de nuestras líneas contra el mismo negocio |
 | `turno` y `turn_token` dentro de un `jsonb` | **Columnas** — reclamar un turno es un update condicional, atómico |
 | La evaluación detrás de un botón | **Se dispara sola** al cerrar |
 
@@ -506,22 +521,61 @@ código los convierte con una tabla fija. Pedirle un 78 a un modelo es falsa
 precisión — la misma transcripción le saca 74 y 79 — y esa cifra la lee el
 cliente (§13.4, ADR 0007).
 
-### 16.4 Los cuatro frenos
+### 16.4 Los dos modos
+
+| | **Conversar** | **Preguntas fijas** |
+|---|---|---|
+| Quién escribe cada turno | el comprador sintético | el operador, de antemano |
+| Costo en modelo | ~1 llamada barata por turno | **cero** |
+| Para qué sirve | ver cómo venden | comparar la misma pregunta entre negocios |
+
+En preguntas fijas los detectores de cierre **no paran la conversación**: si el
+negocio agenda en el mensaje dos, las preguntas tres y cuatro se mandan igual. Es
+lo que hace comparables veinte conversaciones. Y el mensaje siguiente sale cuando
+el anterior tuvo respuesta — mandarle tres seguidos a un número que no contesta no
+agrega información y es la firma exacta de un emisor de spam.
+
+El modelo puede redactar el **borrador** del guion, y nunca es lo que se manda: lo
+que sale es lo que quedó escrito en los campos después de que una persona los leyó
+(misma frontera que ADR 0024).
+
+### 16.5 Los frenos
 
 Escribirle por WhatsApp a un negocio que no nos escribió primero es la acción
 más delicada del producto.
 
-1. **`authorize('smoketest.probe')`** — `external_comms`, techo de plataforma 4.
-   Un número quemado por Meta no se recupera con un rollback.
+1. **`authorize('smoketest.probe')`** — `self_outreach`, techo de plataforma 4.
+   Un número quemado por Meta no se recupera con un rollback. Fue
+   `external_comms` y esa clasificación dejó la capacidad inalcanzable por
+   construcción — ver la migración `0016`.
 2. **Propiedad del número** — en el camino automático tiene que estar publicado
    en el sitio de la organización que pidió el diagnóstico.
 3. **Enfriamiento de 72 h**, global por número.
 4. **Bloqueo** — si piden que paremos, se corta en ese turno y **ningún camino
    automático lo revierte**.
 
+**Los tres primeros rigen el camino automático y no el manual, y eso es diseño y
+no descuido** (ADR 0027, decisión 5): no hay organización contra la que autorizar
+cuando un operador escribe un número suelto, y el enfriamiento existe para que
+cinco recargas de la landing no manden cinco mensajes — no para impedir retestear
+al cliente al que se le acaba de cambiar el prompt. Lo que se paga a cambio: el
+bloqueo es terminal en los dos caminos, la cuenta de mensajes va escrita en el
+botón antes de apretarlo, y la pantalla muestra cuándo fue la última prueba contra
+ese número.
+
 Apagado de emergencia sin desplegar: `settings['pruebas.bateria'].activo`.
 
-### 16.5 El lote
+### 16.6 La prueba, y varias de nuestras líneas
+
+Una prueba es `números × líneas × guiones = conversaciones`. El mismo objeto
+sirve para las tres cosas: una conversación suelta (1×1×1), ver si el agente de un
+negocio aguanta tres clientes a la vez (1×3×1), y barrer treinta líneas de un
+sector (30×1×1).
+
+**Varias de nuestras líneas es la unidad de escala.** Cada línea abre su propio
+hilo de WhatsApp, así que tres líneas dan lo que ninguna otra prueba da —si su
+agente les contesta igual a los tres, si se cae con dos abiertas, si al tercero le
+dice otro precio— y suben el techo diario sin acercarse al umbral de spam.
 
 Treinta clientes × tres pruebas son **noventa conversaciones desde una sola
 línea de WhatsApp**. Un lote sin tope de concurrencia no es una feature a medio
@@ -538,7 +592,7 @@ Dos propósitos, un motor:
 | Pregunta | ¿A cuál se le rompió la IA? | ¿Qué le pasa a quien le escribe? |
 | Frenos | Nos contrataron | Los cuatro de §16.4 |
 
-### 16.6 El informe
+### 16.7 El informe
 
 Enlace público con `share_token`, como el diagnóstico. Agrega lo que pasó y lo
 convierte en algo que se manda.
@@ -556,7 +610,7 @@ abrió el informe tres veces es la señal de compra más barata que tenemos.
 El correo lo redacta el modelo y **lo manda una persona** (misma disciplina que
 §14 y ADR 0021), por Resend y no por SendGrid (ADR 0008).
 
-### 16.7 Métricas de v4
+### 16.8 Métricas de v4
 
 | Métrica | Objetivo |
 |---|---|
@@ -565,9 +619,10 @@ El correo lo redacta el modelo y **lo manda una persona** (misma disciplina que
 | Pruebas que terminan en `failed` por culpa nuestra | < 5% — es la métrica de confiabilidad del arnés |
 | Informes abiertos al menos una vez | ≥ 40% |
 | Costo por conversación | < USD 0,08 |
-| Cobertura de la tanda de QA semanal | 100% de los clientes activos |
+| Cobertura del QA semanal | 100% de los clientes activos |
+| Tiempo desde «quiero probar este número» hasta el primer mensaje | < 60 s, sin research |
 
-### 16.8 Qué sigue siendo manual, a propósito
+### 16.9 Qué sigue siendo manual, a propósito
 
 - **A quién se le escribe fuera del camino automático.** Lo elige una persona.
 - **Qué correo sale.** El sistema redacta; un humano aprieta enviar.
@@ -592,3 +647,4 @@ Todos deliberados, todos documentados.
 | Conectar WhatsApp = registrar una intención | Conectar WhatsApp = compilar el agente | 0024 |
 | El diagnóstico termina en una proyección | El diagnóstico termina en una conversación real que pasó | 0025 |
 | Una prueba por prospecto | Tandas con tope de concurrencia, e informe compartible | 0026 |
+| El smoke tester solo prueba a quien pidió un diagnóstico | Apunta a cualquier número, sin research, y desde varias de nuestras líneas a la vez | 0027 |

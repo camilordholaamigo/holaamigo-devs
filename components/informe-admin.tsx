@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
 
 /**
- * Generar los informes de una tanda, y mandarlos.
+ * Generar los informes de una prueba, y mandarlos.
  *
  * Dos botones separados a propósito. Generar es barato y reversible: arma el
  * objeto y publica un enlace que nadie conoce todavía. Enviar sale del

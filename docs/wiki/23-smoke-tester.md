@@ -16,6 +16,51 @@ cabe en un renglón del diagnóstico:
 
 ---
 
+## Cómo se llaman las cosas
+
+El vocabulario era la mitad del problema hasta
+[ADR 0027](../adr/0027-la-prueba-a-medida-y-las-lineas.md). Queda fijo:
+
+| En pantalla | En el código | En la base |
+|---|---|---|
+| **la prueba** — un guion contra N números desde M líneas | `lote` | `smoke_batches` |
+| **la conversación** — una transcripción, un veredicto | `prueba` | `smoke_probes` |
+| **nuestras líneas** — los números desde los que escribimos | `canal` | `smoke_channels` |
+| **el molde** — lo que no depende del cliente | `plantilla` | `smoke_templates` |
+
+«Tanda» no se usa más: describía un diseño que ya no existe.
+
+---
+
+## Los dos caminos, y no hay un tercero
+
+```
+AUTOMÁTICO                          A MANO
+el cliente escribe su URL           alguien abre /admin/pruebas/nueva
+   ↓                                   ↓
+research crawlea el sitio           escribe el número y el guion
+   ↓                                   ↓
+lanzarDesdeElDiagnostico()          crearLote()
+   ↓                                   ↓
+compilar.ts + research              guion.ts, sin research ni modelo
+   ↓                                   ↓
+        el MISMO PlanDePrueba, y de acá para abajo todo es igual
+   ↓
+motor por eventos → auditoría → evaluación → informe
+```
+
+**El plan es el contrato; quién lo escribió es un detalle.** Un plan compilado del
+research y uno escrito a mano son el mismo objeto y se guardan igual. Lo único que
+los distingue es `cobertura`: sin research no hay ficha, y sin ficha no se puede
+acusar a nadie de haber inventado un dato.
+
+El camino a mano es el que hace de esto una herramienta y no una parte del
+diagnóstico: **funciona con cualquier número, sin que el negocio exista en nuestra
+base.** «Probá la Clínica Mirla, es una clínica estética en Bogotá, quiero que
+pregunte estas tres cosas» son treinta segundos y cero preparación.
+
+---
+
 ## El recorrido completo
 
 ```
@@ -57,7 +102,7 @@ resultado y mostrarle un spinner.
 | `smoke_channels` | Desde dónde escribimos: nuestro número y su `channel_uuid` de Callbell. Editable en caliente. |
 | `smoke_templates` | Los moldes: `servicio`, `faq`, `ventas`. Lo que **no** depende del cliente. |
 | `smoke_targets` | A quién le escribimos. Un número, una fila. Lleva el enfriamiento y el bloqueo. |
-| `smoke_runs` | Una tanda. Agrupa las pruebas de un diagnóstico o de un disparo manual. |
+| `smoke_runs` | Una corrida. Agrupa las conversaciones de un diagnóstico, y es la unidad que el cliente ve en el suyo. |
 | `smoke_probes` | Una conversación completa: transcripción, estado terminal, auditoría y evaluación. |
 
 Cuatro decisiones de esquema que explican casi todo:
@@ -79,6 +124,14 @@ cifra que el cliente lee, y ninguna cifra que el cliente lee sale de un modelo
 **`auditoria_score` y `evaluacion_score` son dos columnas.** El auditor escribe
 al cerrar y el evaluador califica después; con una sola, el segundo pisa al
 primero y se pierde la única de las dos que es determinística.
+
+**La unidad de ocupación es el par `(channel_id, target_phone)`, no el teléfono.**
+Dos de nuestras líneas escribiéndole al mismo negocio son dos hilos de WhatsApp
+distintos y los dos son legítimos — es justo lo que hace falta para ver si su
+agente les contesta igual a tres clientes a la vez. Hasta 0016 «ese número está
+ocupado» se preguntaba solo por `target_phone`, así que la segunda línea cancelaba
+la primera; `smoke_probes_linea_idx` es lo que hace que la pregunta, ahora por
+par, siga costando lo mismo.
 
 ---
 
@@ -135,6 +188,85 @@ crawler.
 
 ---
 
+## Los dos modos
+
+`plan.modo`, y se lee con `modoDelPlan()` porque las filas anteriores a 0017 no lo
+tienen.
+
+| | **Conversar** | **Preguntas fijas (guion)** |
+|---|---|---|
+| Quién escribe cada turno | el comprador sintético | el operador, de antemano |
+| Costo en modelo | ~1 llamada barata por turno | **cero** |
+| Para qué sirve | ver **cómo venden** | comparar la **misma** pregunta entre negocios |
+| Cuándo termina | objetivo cumplido, cierre detectado, o topes | se acabaron los mensajes |
+
+### Por qué el guion no se detiene cuando el negocio cierra
+
+En modo guion los detectores de `agendado` y `cotizacion` **no paran la
+conversación**. Si el negocio agenda en el mensaje dos, las preguntas tres y
+cuatro se mandan igual: es lo que pidió el que armó el guion, y es lo que hace
+comparables veinte conversaciones. Al agotarse el guion se corren una vez sobre
+todo lo que dijo el negocio, para que `cerro_con` signifique lo mismo en los dos
+modos y el embudo siga sumando.
+
+Lo único que sigue mandando por encima del guion es `pidioNoEscribir`. Eso no lo
+revierte ninguna configuración.
+
+### Por qué un mensaje del guion espera respuesta
+
+El mensaje siguiente sale **cuando el anterior tuvo respuesta**, no «los tres
+seguidos». Mandarle tres mensajes a un número que no contesta no produce más
+información —ya sabemos lo que hay que saber en el primero— y sí es la firma
+exacta de un emisor de spam. Si no contestan, la conversación cierra con
+`sin_respuesta`, que es el hallazgo más vendedor que tenemos.
+
+### Lo que el guion no hace
+
+**No reacciona.** Si el negocio pregunta algo, el guion sigue de largo. Es el
+precio de que sea determinístico, es lo que se pidió, y para lo otro está
+`conversar`.
+
+---
+
+## Varias de nuestras líneas
+
+Cada línea de Callbell abre **su propio hilo de WhatsApp**. Tres líneas contra el
+mismo negocio son tres conversaciones simultáneas que el negocio ve como tres
+clientes distintos, y eso da lo que ninguna otra prueba da: si su agente les
+contesta igual a los tres, si se cae con dos abiertas, si al tercero le dice otro
+precio.
+
+También sube el techo diario sin acercarse al umbral de spam de Meta, que es la
+puerta que [ADR 0026](../adr/0026-el-lote-y-el-informe.md) dejó abierta en su
+alternativa B.
+
+### Lo que costó habilitarlo
+
+El motor serializaba por número y el webhook correlacionaba por número. Cuatro
+cambios, y los cuatro están en
+[ADR 0027](../adr/0027-la-prueba-a-medida-y-las-lineas.md):
+
+1. **La correlación pasa a ser por par.** El payload trae el `channel_uuid` y, para
+   un entrante, también nuestro propio número: con cualquiera de los dos se
+   desambigua. Cuando no viene ninguno se cae al comportamiento de siempre y queda
+   escrito en el log `desambiguación a ciegas entre líneas`. **Con una sola línea
+   ese camino es exactamente correcto**, que es por qué esto no rompió nada.
+2. `cancelarVivasContra` recibe la línea. Sin eso, arrancar la línea B cancelaba
+   la de la línea A contra el mismo negocio.
+3. «La línea está ocupada» se evalúa por par, en `avanzarCola` y en el avanzador
+   del lote.
+4. El espaciado de 90 s entre conversaciones es por par: lo que confunde al que
+   contesta es ver dos hilos seguidos del MISMO número.
+
+### El riesgo que queda escrito
+
+Si el proveedor deja de mandar `channel_uuid` **y** nuestro propio número, dos
+conversaciones simultáneas contra el mismo negocio desde dos líneas pueden cruzar
+un mensaje. Queda en el log con esas palabras. Se arregla el día que haga falta,
+mirando el log.
+
+---
+
 ## El motor
 
 `lib/pruebas/motor.ts`. La idea central, y todo lo demás es consecuencia:
@@ -179,13 +311,14 @@ que vio la respuesta completa.
 webhook tiene que encontrar la fila ya armada. Al revés se pierde la respuesta
 y no hay reintento.
 
-### Serial por número, paralelo entre números
+### Serial por hilo, paralelo entre hilos
 
-Dos conversaciones simultáneas contra la misma línea caen en el mismo hilo de
-WhatsApp y ninguna mide nada. Contra números distintos no hay problema, porque
-la correlación es por número. De ahí `avanzarCola()`: una prueba viva por
-número, y la siguiente no arranca hasta 90 segundos después de que cerró la
-anterior.
+Un hilo es el par **(nuestra línea, su número)**. Dos conversaciones simultáneas
+en el MISMO hilo caen en la misma ventana de WhatsApp y ninguna mide nada; en
+hilos distintos —otro negocio, u otra de nuestras líneas contra el mismo negocio—
+no hay problema, porque la correlación desambigua. De ahí `avanzarCola()`: una
+conversación viva por hilo, y la siguiente no arranca hasta 90 segundos después de
+que cerró la anterior en ese mismo hilo.
 
 Ese espaciado es **una guarda, no un `sleep`**. La primera versión dormía y
 rompía tres cosas: el GET de estado tiene techo de 60 s y moría a mitad de
@@ -327,22 +460,67 @@ dejaba los botones sin manejadores.
 
 ## Lo que ve el equipo
 
-**`/admin/pruebas`** — tres bloques, cada uno con la decisión que cambia:
+**`/admin/pruebas`** — el orden de la pantalla es el orden en que se usa, y cada
+bloque tiene escrita encima la decisión que cambia:
 
 | Bloque | Pregunta | Decisión |
 |---|---|---|
+| Nueva prueba | — | Es la acción. Va arriba porque es por lo que se entra |
 | Qué tan vivas están las líneas | ¿El canal sirve o hablamos solos? | Seguir o parar |
 | Las últimas 40 conversaciones | ¿A qué prospecto llamo ahora? | A quién marcar |
-| Configuración | — | Desde qué número, con qué moldes |
+| Las pruebas | ¿Cómo va lo que lancé? | Pausar, cancelar, informar |
+| Informes | ¿Quién abrió el suyo? | A quién llamar primero |
+| Nuestras líneas | — | Desde qué números escribimos |
 
-La agregación sale de `holaamigo.resumen_de_pruebas(p_desde)`, no de contar
-filas en el render (ADR 0023). Ignora las canceladas: una prueba que
-reemplazamos nosotros no dice nada del negocio del cliente y ensuciaría la
-mediana.
+Cada fila de conversación trae **el último mensaje del negocio**. Si con eso ya
+sabés, no hace falta abrir — y sin eso hay que abrir treinta.
 
-**`/admin/pruebas/[pruebaId]`** — transcripción primero, después el plan
-compilado (qué se preguntó, por qué, contra qué ficha), después los veredictos.
-Una nota sola arriba de todo invitaría a leer solo la nota.
+La agregación sale de `holaamigo.resumen_de_pruebas(p_desde)`, no de contar filas
+en el render (ADR 0023). Ignora las canceladas: una prueba que reemplazamos
+nosotros no dice nada del negocio del cliente y ensuciaría la mediana.
+
+**`/admin/pruebas/nueva`** — tres pasos y una vista previa al lado:
+
+1. **A quién.** Un número y el nombre del negocio, o varios números pegados, o
+   clientes elegidos de una lista. Si el número ya lo conocemos, la pantalla dice
+   cuándo fue la última prueba **antes** de mandar — es lo que reemplaza al
+   enfriamiento en el camino manual, que no lo tiene a propósito.
+2. **Qué le decimos.** Conversar o preguntas fijas. En conversar: el saludo, el
+   objetivo, lo que hay que averiguar, y un botón que redacta el borrador con IA a
+   partir de dos líneas escritas a las apuradas. **Lo que se manda es lo que quedó
+   escrito en los campos**, no lo que dijo el modelo.
+3. **Desde qué líneas.** Una o varias. El producto cartesiano decide todo lo
+   demás, y va escrito en el botón: «Escribir ahora · 3 conversaciones».
+
+**La columna derecha es el corazón de la pantalla.** Son los mismos globos de
+WhatsApp que va a ver el que contesta, calculados con las **mismas funciones** que
+después arman el plan en el servidor (`lib/pruebas/guion.ts` es puro por eso). El
+problema que arregla no era de campos que faltaban: era que nadie sabía qué hacía
+el botón, y un preview exacto contesta eso mejor que cualquier explicación.
+
+En modo conversar solo el primer mensaje es literal: los demás los redacta el
+comprador en vivo, así que se listan los temas y **se dice que se redactan en
+vivo**. Pintar un globo con una pregunta que a lo mejor no sale con esas palabras
+sería fingir precisión.
+
+**`/admin/pruebas/[pruebaId]`** — la conversación. Transcripción primero **y en
+vivo**, después el plan (qué se preguntó, por qué, contra qué ficha), después los
+veredictos. Una nota sola arriba de todo invitaría a leer solo la nota.
+
+Que la transcripción crezca sola es lo que hace que la herramienta se vuelva a
+abrir: la conversación tarda entre dos y veinticinco minutos, y antes había que
+recargar a mano para saber si había pasado algo. Y no es solo comodidad — el GET
+que consulta esa pantalla **es la red de seguridad real del motor**.
+
+**`/admin/pruebas/lotes/[loteId]`** — la prueba, con dos vistas y la que
+corresponde al tamaño puesta por defecto:
+
+| Vista | Cuándo | Qué contesta |
+|---|---|---|
+| **Comparar** | pocas conversaciones | «¿les contestó igual a los tres?» — las transcripciones lado a lado, hasta seis columnas |
+| **Lista** | un barrido de treinta | «¿a quién llamo?» — una fila por conversación con el último mensaje a la vista |
+
+Si hay que abrir tres pestañas para comparar, nadie compara.
 
 ---
 
@@ -351,13 +529,51 @@ Una nota sola arriba de todo invitaría a leer solo la nota.
 Escribirle por WhatsApp a un negocio que no nos escribió primero es la acción
 más delicada del producto.
 
-1. **`authorize('smoketest.probe')`** — `external_comms`, techo de plataforma
-   **4**, no 5. Un número quemado por Meta no se recupera con un rollback.
+1. **`authorize('smoketest.probe')`** — clase `self_outreach`, techo de
+   plataforma **4**, no 5. Un número quemado por Meta no se recupera con un
+   rollback.
+
+   `self_outreach` y no `external_comms`, y la diferencia no es semántica: con
+   `external_comms` el plan del prospecto y la autonomía de sus agentes topaban
+   la capacidad en nivel 1, así que **el disparo automático no corrió nunca**.
+   Los dos diales gobiernan lo que los agentes DEL CLIENTE hacen en su nombre;
+   acá el que recibe el mensaje es el cliente mismo. Ver la migración `0016`.
 2. **Propiedad del número** — en el camino automático tiene que estar publicado
    en el sitio de la organización que pidió el diagnóstico.
 3. **Enfriamiento de 72 h**, global por número.
 4. **Bloqueo** — si piden que paremos, se corta en ese turno y **ningún camino
    automático lo desbloquea**. Solo una persona desde el admin.
+
+### Qué rige en cada camino, sin eufemismos
+
+Los cuatro se escribieron pensando en el disparo automático, donde no hay nadie
+mirando. El camino manual tiene otros, y hay que decirlo en voz alta
+([ADR 0027](../adr/0027-la-prueba-a-medida-y-las-lineas.md), decisión 5):
+
+| Freno | Automático | Manual |
+|---|---|---|
+| `authorize('smoketest.probe')` | siempre | **solo si hay organización vinculada** |
+| Número publicado en el sitio de esa organización | siempre | nunca — lo eligió una persona |
+| Enfriamiento de 72 h | siempre | no |
+| Bloqueo («no me escriban») | siempre | **siempre, y no lo levanta nada** |
+| Espaciado 90 s por hilo | siempre | siempre |
+| Apagado de emergencia en `settings` | siempre | no |
+
+Los tres primeros **no pueden** aplicar al camino manual: no hay organización
+contra la que autorizar cuando el operador escribe un número suelto, y el
+enfriamiento existe para que cinco recargas de la landing no manden cinco
+mensajes — acá hay una persona que apretó un botón una vez, y que muchas veces
+necesita volver a probar el mismo número justo después de haberle cambiado algo
+al agente.
+
+**Eso no es un descuido: es el diseño.** Y para que sea un diseño y no un agujero,
+lo que se paga a cambio:
+
+- el **bloqueo es terminal en los dos caminos**;
+- la cuenta va **escrita en el botón** antes de apretarlo: «Escribir ahora · 3
+  conversaciones» son tres mensajes de WhatsApp reales;
+- la pantalla muestra **cuándo fue la última prueba** contra ese número;
+- cada conversación queda como fila con su hora, su línea y su operador.
 
 El apagado de emergencia no necesita despliegue:
 
@@ -372,17 +588,25 @@ update holaamigo.settings
 ## Puesta en marcha
 
 1. **Variables.** `CALLBELL_API_KEY` y `CALLBELL_WEBHOOK_SECRET` en Vercel.
-2. **La línea.** `/admin/pruebas` → «Nuestra línea»: número y `channel_uuid`.
+2. **Las líneas.** `/admin/pruebas` → «Nuestras líneas»: número y `channel_uuid`
+   de cada una. Con una alcanza para arrancar; la segunda y la tercera son lo que
+   permite probar varias conversaciones simultáneas contra el mismo negocio.
 3. **El envío, aislado.** El botón «Probar el envío» manda un mensaje a tu
    propio celular. **No sigas hasta que lo veas llegar.** Ahí vive la mitad de
    los problemas de configuración, y salen todos en dos segundos.
 4. **El webhook.** Apuntá Callbell —o la aplicación que reenvía— a
    `https://TU_DOMINIO/api/webhooks/callbell?k=EL_SECRETO`. El `GET` de esa
    misma URL devuelve `{ok: true}` si el secreto es correcto.
-5. **Una conversación entera, a mano.** Creá una prueba contra tu propio
-   celular y contestá vos. Verificá mensaje por mensaje que la transcripción
-   quede completa y que la prueba cierre sola.
-6. **El cron.** `/api/cron/pruebas` ya está en `vercel.json`. Hoy corre **una
+5. **Una conversación entera, a mano.** `/admin/pruebas/nueva` contra tu propio
+   celular, y contestá vos. Verificá mensaje por mensaje que la transcripción
+   quede completa y que la conversación cierre sola. Hacelo **dos veces**: una en
+   modo conversar y otra con un guion de tres preguntas, que son dos ramas
+   distintas del motor.
+6. **Con dos líneas, la prueba que importa.** Si configuraste una segunda línea,
+   creá una prueba contra tu celular eligiendo las dos. Tienen que llegar dos
+   conversaciones separadas y **las dos tienen que avanzar**. Si solo avanza una,
+   la correlación no está desambiguando: mirá el log.
+7. **El cron.** `/api/cron/pruebas` ya está en `vercel.json`. Hoy corre **una
    vez al día** (11:30 UTC) porque el plan Hobby de Vercel no permite más. El
    arnés funciona igual: la red real es el GET de estado, que la interfaz
    consulta cada pocos segundos. Lo que se pierde es que una prueba de alguien
@@ -453,6 +677,9 @@ limit 30;
 | Contestaron pero no aparece en la transcripción | El webhook no llegó (secreto mal en la URL) o no matcheó. Buscá `ningún match` en el log. |
 | La conversación quedó a medias | El comprador cayó al heurístico por falta de `OPENAI_API_KEY`. Sigue funcionando, peor. |
 | Todas las pruebas dicen `sin_respuesta` | Revisá que el número de pruebas no esté bloqueado en Callbell. |
+| Con varias líneas, un mensaje apareció en la conversación equivocada | Buscá `desambiguación a ciegas entre líneas` en el log: el payload no trajo ni `channel_uuid` ni nuestro número. |
+| Con varias líneas, solo una arrancó | `avanzarCola` o `siguientePendiente` sin el canal. Hay una prueba que lo vigila; corré `node scripts/test-smoke-tester.mjs`. |
+| Un guion de cuatro preguntas mandó dos | Los detectores de cierre corrieron antes de la rama del guion. Es una invariante de ORDEN y también está bajo prueba. |
 | `cobertura` en 0% siempre | El research está fallando: sin ficha no hay exactitud que medir. |
 
 ---
@@ -474,11 +701,22 @@ ninguna pantalla.
 cerrara la última prueba, tiene que volver al enlace del diagnóstico. Un correo
 con el resultado es lo obvio que sigue, y Resend ya está conectado.
 
+**Una sola persona sintética por prueba.** Tres líneas hoy son la misma identidad
+tres veces: mismo nombre, mismo correo, mismo presupuesto. Que cada línea lleve su
+propia persona es lo que convertiría esto de una prueba de coherencia en una de
+carga, y es lo obvio que sigue del lado de las líneas.
+
+**El camino manual no tiene enfriamiento.** Es deliberado —ver la tabla de frenos
+en [`docs/api/pruebas.md`](../api/pruebas.md#lanzarts)— y la contrapartida es que
+la pantalla muestre cuándo fue la última prueba. Si algún día se abusa, el freno
+que falta es un tope por operador y por día, no un enfriamiento global.
+
 ---
 
 ## Referencias
 
 - [ADR 0025 · Le escribimos a su línea antes de venderle nada](../adr/0025-el-smoke-tester-como-evidencia.md)
+- [ADR 0027 · La prueba a medida, y varias líneas contra el mismo número](../adr/0027-la-prueba-a-medida-y-las-lineas.md)
 - [ADR 0007 · Números deterministas](../adr/0007-numeros-deterministas.md)
 - [ADR 0023 · Mostrar el trabajo](../adr/0023-mostrar-el-trabajo.md)
 - `docs/referencia/smoke-tester/` — el paquete portable del que sale esto, con

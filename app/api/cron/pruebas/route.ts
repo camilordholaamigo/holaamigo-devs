@@ -106,22 +106,29 @@ export async function GET(request: Request) {
     // ── B · colas huérfanas ───────────────────────────────────────────────
     const { data: pendientes } = await db()
       .from('smoke_probes')
-      .select('run_id, target_id')
+      .select('run_id, target_id, channel_id')
       .eq('estado', 'pending')
       .limit(200);
 
-    const combinaciones = new Map<string, { runId: string; targetId: string }>();
+    // La combinación incluye el canal desde ADR 0027: la cola es por par
+    // (nuestra línea, su número). Agrupando solo por (run, target) se despertaba
+    // una de las líneas y las otras se quedaban pendientes hasta el otro día.
+    const combinaciones = new Map<
+      string,
+      { runId: string; targetId: string; canalId: string }
+    >();
     for (const p of pendientes ?? []) {
-      combinaciones.set(`${p.run_id}:${p.target_id}`, {
+      combinaciones.set(`${p.run_id}:${p.target_id}:${p.channel_id}`, {
         runId: p.run_id,
         targetId: p.target_id,
+        canalId: p.channel_id,
       });
     }
 
-    for (const { runId, targetId } of combinaciones.values()) {
+    for (const { runId, targetId, canalId } of combinaciones.values()) {
       try {
         // `avanzarCola` es idempotente: si ya hay una corriendo, se retira.
-        await avanzarCola(runId, targetId);
+        await avanzarCola(runId, targetId, canalId);
         reporte.colas += 1;
       } catch (err) {
         console.error('[cron:pruebas] no se pudo avanzar una cola', err);

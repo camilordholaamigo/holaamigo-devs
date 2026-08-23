@@ -9,6 +9,7 @@ import {
   ESTANCADA_MS,
   SILENCIO_MS,
   SILENCIO_TOPE_MS,
+  modoDelPlan,
   type CerroCon,
   type EstadoPrueba,
   type Mensaje,
@@ -126,7 +127,7 @@ export async function arrancarPrueba(pruebaId: string): Promise<{ ok: boolean; e
     });
     await progreso(prueba.run_id, 'error', `No se pudo escribir a ${prueba.target_phone}`);
     // La cola no se muere por un envío fallido: se pasa a la siguiente.
-    await avanzarCola(prueba.run_id, prueba.target_id);
+    await avanzarCola(prueba.run_id, prueba.target_id, prueba.channel_id);
     return { ok: false, error: envio.error ?? 'no se pudo enviar' };
   }
 
@@ -232,6 +233,22 @@ export async function avanzarTurno(pruebaId: string, token: string): Promise<voi
       return;
     }
 
+    // ── MODO GUION ──────────────────────────────────────────────────────
+    //
+    // Va ANTES de los detectores de cierre, y ése es todo el punto: si el
+    // negocio agenda en el mensaje dos, las preguntas tres y cuatro se mandan
+    // igual. Eso es lo que pidió el que armó el guion, y es lo que permite
+    // hacerle la misma pregunta a veinte negocios y comparar las veinte
+    // respuestas. El cierre se calcula UNA vez, al final, sobre todo lo que
+    // dijo el negocio (ADR 0027, decisión 2).
+    //
+    // Lo único que sigue mandando por encima del guion es `pidioNoEscribir`,
+    // arriba. Eso no lo revierte ninguna configuración.
+    if (modoDelPlan(plan) === 'guion') {
+      await avanzarGuion(prueba, plan, token);
+      return;
+    }
+
     const cierre = detectarCierreDeNegocio(bloque);
     if (cierre) {
       await cerrarPrueba(pruebaId, {
@@ -314,6 +331,67 @@ export async function avanzarTurno(pruebaId: string, token: string): Promise<voi
       cerroCon: null,
       motivo: err instanceof Error ? err.message.slice(0, 300) : 'error desconocido',
     }).catch(() => {});
+  }
+}
+
+/**
+ * Un turno en modo guion: el mensaje siguiente ya está escrito.
+ *
+ * No llama a ningún modelo, no decide nada y no puede desviarse. Es la mitad
+ * del valor de este modo: la misma prueba contra veinte negocios manda
+ * exactamente las mismas palabras, así que las respuestas son comparables.
+ *
+ * `turno` es cuántos mensajes nuestros salieron, y `guion[0]` fue la apertura:
+ * por eso el índice del que viene es `turno` y no `turno + 1`. Cuando se acaban,
+ * la prueba cierra con el veredicto de negocio calculado sobre TODO lo que dijo
+ * el negocio — no solo sobre el último bloque —, para que `cerro_con` siga
+ * significando lo mismo que en modo conversar y el embudo siga sumando.
+ */
+async function avanzarGuion(
+  prueba: PruebaRow,
+  plan: PlanDePrueba,
+  token: string,
+): Promise<void> {
+  const guion = plan.guion ?? [];
+  const siguiente = guion[prueba.turno];
+
+  if (!siguiente) {
+    const cierre = detectarCierreDeNegocio(todoDelNegocio(prueba.conversation));
+    await cerrarPrueba(prueba.id, {
+      estado: 'completed',
+      cerroCon: cierre ?? 'objetivo_cumplido',
+      motivo: `Se mandaron los ${guion.length} mensajes del guion y se registró lo que contestaron.`,
+    });
+    return;
+  }
+
+  // Se reclama igual que en modo conversar aunque acá no haya nada que redactar:
+  // la ráfaga del negocio dispara un webhook por mensaje, y sin el token los
+  // cuatro mandarían la misma pregunta cuatro veces.
+  const reclamado = await reclamarTurno(prueba.id, token);
+  if (!reclamado) return;
+
+  const canal = await canalPorId(prueba.channel_id);
+  const ahora = new Date().toISOString();
+
+  await escribir(prueba.id, {
+    conversation: [
+      ...prueba.conversation,
+      { role: 'comprador', text: siguiente, timestamp: ahora },
+    ],
+    turno: prueba.turno + 1,
+    awaiting_reply: true,
+    motivo_cierre: `Mensaje ${prueba.turno + 1} de ${guion.length} del guion.`,
+  });
+
+  const envio = await enviarMensaje({ canal, to: prueba.target_phone, texto: siguiente });
+
+  if (!envio.ok) {
+    await cerrarPrueba(prueba.id, {
+      estado: 'failed',
+      cerroCon: null,
+      motivo: `No se pudo enviar el mensaje ${prueba.turno + 1} del guion: ${envio.error}`,
+    });
   }
 }
 
@@ -465,7 +543,7 @@ export async function cerrarPrueba(
     },
   });
 
-  await avanzarCola(prueba.run_id, prueba.target_id);
+  await avanzarCola(prueba.run_id, prueba.target_id, prueba.channel_id);
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -496,12 +574,26 @@ export async function cerrarPrueba(
  * retira. Se llama desde el cierre de cada prueba, desde el GET y desde el
  * watchdog, y las tres pueden pasar al mismo tiempo.
  */
-export async function avanzarCola(runId: string, targetId: string): Promise<void> {
+export async function avanzarCola(
+  runId: string,
+  targetId: string,
+  /**
+   * Desde qué línea nuestra.
+   *
+   * La cola es por PAR (línea, número) y no por número desde ADR 0027: dos de
+   * nuestras líneas escribiéndole al mismo negocio son dos hilos de WhatsApp
+   * distintos y los dos tienen que poder avanzar. Sin este parámetro, la
+   * conversación de la línea B veía «ya hay una corriendo» —la de la línea A—
+   * y nunca arrancaba.
+   */
+  canalId: string,
+): Promise<void> {
   const { data: viva } = await db()
     .from('smoke_probes')
     .select('id')
     .eq('run_id', runId)
     .eq('target_id', targetId)
+    .eq('channel_id', canalId)
     .eq('estado', 'running')
     .limit(1);
 
@@ -512,6 +604,7 @@ export async function avanzarCola(runId: string, targetId: string): Promise<void
     .select('id')
     .eq('run_id', runId)
     .eq('target_id', targetId)
+    .eq('channel_id', canalId)
     .eq('estado', 'pending')
     .order('created_at', { ascending: true })
     .limit(1);
@@ -522,11 +615,14 @@ export async function avanzarCola(runId: string, targetId: string): Promise<void
   }
 
   // Sin esta pausa el negocio ve dos conversaciones distintas pegadas y
-  // contesta la segunda con el contexto de la primera.
+  // contesta la segunda con el contexto de la primera. También por par: lo que
+  // confunde al que contesta es ver dos hilos seguidos del MISMO número, no que
+  // le escriban dos personas distintas.
   const { data: ultima } = await db()
     .from('smoke_probes')
     .select('finished_at')
     .eq('target_id', targetId)
+    .eq('channel_id', canalId)
     .not('finished_at', 'is', null)
     .order('finished_at', { ascending: false })
     .limit(1);
@@ -603,6 +699,16 @@ export async function recogerSiEstancada(prueba: PruebaRow): Promise<boolean> {
 export async function cancelarVivasContra(
   targetPhone: string,
   /**
+   * Desde qué línea nuestra. Solo se cancela lo que está vivo EN ESE HILO.
+   *
+   * Sin esto, arrancar la conversación de la línea B cancelaba la de la línea A
+   * contra el mismo negocio — que es exactamente lo que ADR 0027 quiere
+   * permitir. `null` cancela contra ese número desde todas las líneas, y es lo
+   * que se usa cuando alguien cancela a mano desde el admin: ahí la intención es
+   * «parale a todo lo que le estemos escribiendo a este señor».
+   */
+  canalId: string | null,
+  /**
    * La corrida que se está armando ahora mismo.
    *
    * Sin esto, `crearRun` se cancelaba a sí mismo: inserta N pruebas en
@@ -624,6 +730,7 @@ export async function cancelarVivasContra(
     .eq('target_phone', targetPhone)
     .in('estado', ['pending', 'running']);
 
+  if (canalId) q = q.eq('channel_id', canalId);
   if (exceptoRunId) q = q.neq('run_id', exceptoRunId);
 
   const { data } = await q.select('id');
@@ -649,6 +756,20 @@ export function bloqueDelNegocio(conversation: Mensaje[]): string {
     salida.unshift(conversation[i].text);
   }
   return salida.join('\n\n');
+}
+
+/**
+ * Todo lo que dijo el negocio en la conversación entera.
+ *
+ * `bloqueDelNegocio` mira el último bloque, que es lo correcto para decidir el
+ * turno siguiente. Esto mira todo, y es lo correcto para el veredicto final de
+ * un guion: si agendaron en el mensaje dos, agendaron.
+ */
+export function todoDelNegocio(conversation: Mensaje[]): string {
+  return conversation
+    .filter((m) => m.role === 'negocio')
+    .map((m) => m.text)
+    .join('\n');
 }
 
 const NO_ESCRIBIR =

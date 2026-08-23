@@ -13,6 +13,19 @@ Regla general del subsistema, y vale para todo lo de abajo:
 > Un fallo del smoke tester no puede tumbar el diagnóstico de un cliente. Lo que
 > falla, se registra y devuelve un estado degradado.
 
+Y el vocabulario, que era la mitad del problema hasta ADR 0027 y ahora queda
+fijo:
+
+| En pantalla | En el código | En la base |
+|---|---|---|
+| **la prueba** — un guion contra N números desde M líneas | `lote` | `smoke_batches` |
+| **la conversación** — una transcripción, un veredicto | `prueba` | `smoke_probes` |
+| **nuestras líneas** — los números desde los que escribimos | `canal` | `smoke_channels` |
+| **el molde** — lo que no depende del cliente | `plantilla` | `smoke_templates` |
+
+«Tanda» no se usa más. La palabra describía un diseño que ya no existe y por eso
+nadie sabía qué hacía el botón.
+
 Índice de módulos:
 
 | Módulo | De qué se ocupa |
@@ -21,6 +34,7 @@ Regla general del subsistema, y vale para todo lo de abajo:
 | [`callbell.ts`](#callbellts) | El transporte: mandar y parsear |
 | [`numeros.ts`](#numerosts) | De dónde salen los números |
 | [`compilar.ts`](#compilarts) | Plantilla + research → prueba concreta |
+| [`guion.ts`](#guionts) | Formulario → prueba concreta, sin modelo y sin base |
 | [`comprador.ts`](#compradorts) | El comprador sintético |
 | [`motor.ts`](#motorts) | El motor por eventos |
 | [`webhook.ts`](#webhookts) | Correlación de entrantes |
@@ -46,6 +60,10 @@ reemplazar. Todo lo demás compila tal cual.
 | 4 | La telemetría | `@/lib/events` → `track()` | Trivial (o borrar) |
 | 5 | El gobierno | `@/lib/governance/authorize` → `authorize()` | Se puede reemplazar por `() => true` y perder los frenos |
 | 6 | Las constantes de tiempo | `types.ts` | **Hay que medirlas contra tu mercado** |
+
+`guion.ts` no está en la lista a propósito: es puro y compila tal cual. Es el
+archivo por el que empezar si querés el subsistema andando en una tarde sin
+research ni modelo.
 
 **Sobre la 1:** todo lo que se escribe pasa por `mustWrite()` o `tryWrite()` y
 nunca por un `await` pelado. No es estilo: `supabase-js` **no lanza**, devuelve
@@ -83,6 +101,28 @@ interface PlanDePrueba { … }
 La prueba compilada contra un negocio concreto. **Es datos, no un prompt** — se
 muestra campo por campo, se versiona y se diffea. Un prompt generado no permite
 ninguna de las tres.
+
+Cuatro campos son **opcionales porque las filas escritas antes de ADR 0027 no los
+tienen**, y ésa es la única razón:
+
+| Campo | Qué es |
+|---|---|
+| `modo` | `'conversar'` \| `'guion'`. **No se lee directo: se lee con `modoDelPlan(plan)`.** Un `undefined` colándose a un `switch` deja una conversación vieja sin avanzar y sin decir por qué. |
+| `guion` | Solo en modo guion: los mensajes en orden. `guion[0]` **es** `apertura`, duplicado a propósito — `apertura` es el contrato con que el motor arranca cualquier prueba, y derivarlo obligaría a todos los consumidores a saber en qué modo está. |
+| `contexto` | Lo que el equipo sabe del negocio, escrito a mano. Va al prompt del comprador y **no a la ficha**: la ficha es lo que se puede citar con URL, y sin fuente no se puede acusar a nadie de inventar un dato (§13.4). |
+| `instrucciones` | Cómo se comporta el comprador. Ajusta el tono, nunca los hechos. |
+
+```ts
+type ModoDePrueba = 'conversar' | 'guion'
+modoDelPlan(plan): ModoDePrueba
+```
+
+| | `conversar` | `guion` |
+|---|---|---|
+| Quién escribe cada turno | el comprador sintético | el operador, de antemano |
+| Costo en modelo | ~1 llamada barata por turno | **cero** |
+| Detectores de cierre | paran la conversación | **no la paran** — se corren una vez al final |
+| Cuándo termina | objetivo cumplido, cierre detectado o topes | se acabaron los mensajes |
 
 ```ts
 type CerroCon = 'agendado' | 'cotizacion' | 'objetivo_cumplido'
@@ -177,6 +217,38 @@ Es lo único que queda cuando el proveedor cambia el formato sin avisar.
 
 ---
 
+### Varias líneas
+
+```ts
+canalActivo(canalId?): Promise<CanalRow | null>     // la primera activa
+canalesActivos(): Promise<CanalRow[]>               // todas, por orden de creación
+canalPorId(canalId): Promise<CanalRow>              // lanza
+```
+
+Desde ADR 0027 **varias líneas es la unidad de escala**: cada una abre su propio
+hilo de WhatsApp, así que tres líneas permiten ver si el agente de un negocio les
+contesta igual a tres clientes a la vez, y suben el techo diario sin acercarse al
+umbral de spam de Meta.
+
+`canalActivo()` sigue existiendo y sigue devolviendo **una**: el camino automático
+del diagnóstico no tiene por qué elegir. Con una sola línea configurada —el estado
+de partida— todo se comporta exactamente igual que antes.
+
+`Entrante` gana un campo por esto:
+
+```ts
+interface Entrante { candidatos: string[]; canalUuid: string | null; … }
+```
+
+`canalUuid` es lo que desambigua cuando dos de NUESTRAS líneas tienen una
+conversación viva contra el mismo negocio. Se busca en `channel_uuid`,
+`channelUuid`, `channel_id`, `channelId` y `channel.uuid`, recursivo hasta
+profundidad 3, porque la aplicación que reenvía usa una forma distinta de la de
+Callbell. Devuelve `null` sin drama: la desambiguación tiene otro camino y no
+puede depender de que el proveedor no cambie nunca el nombre del campo.
+
+---
+
 ## `numeros.ts`
 
 ```ts
@@ -231,6 +303,52 @@ Un `chequeo` que apunte a una clave que la ficha no tiene se resuelve a `null`,
 **no a «no cumplió»**. El criterio pasa a la capa 3 y el informe dice «no se
 pudo verificar». Reprobar a un negocio porque nosotros no pudimos leer su sitio
 sería inventar un resultado.
+
+---
+
+## `guion.ts`
+
+```ts
+planALaMedida({ entrada, rubrica, ficha? }): PlanDePrueba
+validarAMedida(entrada): string | null
+turnosDe(entrada): number
+moldeDelModo(modo): 'a-medida' | 'guion'
+cifrasDelPlan(plan): string[]
+aperturaSugerida(negocio, producto): string
+objetivoSugerido(producto): string
+MAX_SONDAS = 6 · MAX_GUION = 8 · PERSONA_POR_DEFECTO
+```
+
+`compilar.ts` produce un plan leyendo el research con ayuda de un modelo. **Esto
+produce el mismo objeto leyendo un formulario.** Río abajo nadie se enteró: el
+motor, el auditor, el evaluador y el informe leen el plan y les da igual quién lo
+escribió (ADR 0027, decisión 1).
+
+**ES PURO, Y ES UNA COSTURA MÁS.** No importa la base, ni el cliente de IA, ni
+`resolverRubrica` — la rúbrica llega ya resuelta desde el llamador. Dos razones,
+y la primera no es negociable:
+
+1. La vista previa del formulario tiene que mostrar **exactamente** lo que se va
+   a mandar, y para eso este módulo corre en el navegador. Un preview que se
+   calcula distinto de lo que se manda es peor que no tener preview.
+2. Se puede probar sin levantar nada.
+
+Si portás el subsistema, este archivo compila tal cual.
+
+**No le pasa `blanquearCifras()` al texto del operador.** La red de cifras existe
+para que un MODELO no invente un precio (ADR 0007/0024); acá los números los
+escribió una persona que sabe qué está preguntando, y taparle el «¿cuánto vale el
+tratamiento de 4 sesiones?» convertiría la herramienta en un adivinador. Lo que
+sí hace es declararlas permitidas —`cifrasDelPlan()`— para que el comprador pueda
+repetirlas y **ninguna otra**.
+
+`validarAMedida` corre en el cliente para apagar el botón y **otra vez en el
+servidor** antes de mandar un mensaje. No es paranoia: la petición del cliente es
+un dato de entrada, y del otro lado del botón hay un WhatsApp real.
+
+En modo guion, `sondas` son los mensajes `2..n`. No es una traducción caprichosa:
+es lo que permite que el evaluador diga «no contestó la pregunta 3» y que el
+informe agrupe por pregunta entre veinte negocios.
 
 ---
 
@@ -292,6 +410,17 @@ vio la respuesta completa. Calcula `segundos_primera_respuesta` una sola vez.
 avanzarTurno(pruebaId, token): Promise<void>   // en after(), nunca suelto
 ```
 
+En **modo guion** la rama del guion corre ANTES de los detectores de cierre, y
+ése es todo el punto: si el negocio agenda en el mensaje dos, las preguntas tres y
+cuatro se mandan igual — es lo que pidió el que armó el guion, y es lo que hace
+comparables veinte conversaciones. Lo único que sigue mandando por encima es
+`pidioNoEscribir`. Al agotarse el guion se corre `detectarCierreDeNegocio` UNA vez
+sobre `todoDelNegocio(conversation)`, para que `cerro_con` signifique lo mismo en
+los dos modos y el embudo siga sumando.
+
+**Hay una prueba que vigila ese orden** (`scripts/test-smoke-tester.mjs`, §8): es
+una invariante de posición, y un refactor la rompe sin cambiar una línea.
+
 El trabajo de fondo. Se retira en silencio si otro chunk se llevó el turno —
 eso es lo normal, no un error. Orden interno, y los tres detalles que importan:
 
@@ -337,6 +466,41 @@ acaba de insertar en `pending`.
 
 ---
 
+### Lo que se serializa, y por qué el par
+
+```ts
+avanzarCola(runId, targetId, canalId): Promise<void>
+cancelarVivasContra(targetPhone, canalId: string | null, exceptoRunId?): Promise<number>
+todoDelNegocio(conversation): string
+```
+
+**La unidad de ocupación es el par (nuestra línea, su número), no el número.** Dos
+conversaciones simultáneas desde la MISMA línea al MISMO negocio caen en el mismo
+hilo de WhatsApp y ninguna mide nada; desde líneas distintas son hilos distintos y
+las dos valen — que es justo la capacidad que ADR 0027 vino a habilitar.
+
+Los dos parámetros nuevos no son adorno:
+
+- sin `canalId` en `avanzarCola`, la conversación de la línea B veía «ya hay una
+  corriendo» —la de la línea A— y **nunca arrancaba**;
+- sin `canalId` en `cancelarVivasContra`, arrancar la línea B **cancelaba** la de
+  la línea A contra el mismo negocio.
+
+`canalId: null` en `cancelarVivasContra` cancela contra ese número desde todas las
+líneas. Es lo que usa el botón «Cancelar» del admin, donde la intención es «parale
+a todo lo que le estemos escribiendo a este señor».
+
+El espaciado de `ENTRE_PRUEBAS_MS` también es por par: lo que confunde al que
+contesta es ver dos hilos seguidos del MISMO número, no que le escriban dos
+personas distintas.
+
+`todoDelNegocio` existe al lado de `bloqueDelNegocio` y la diferencia importa:
+`bloque` mira el último bloque —correcto para decidir el turno siguiente— y `todo`
+mira la conversación entera, que es lo correcto para el veredicto final de un
+guion. Si agendaron en el mensaje dos, agendaron.
+
+---
+
 ## `webhook.ts`
 
 ```ts
@@ -344,11 +508,33 @@ correlacionar(entrante): Promise<ResultadoCorrelacion>
 mismoNumero(a: string, b: string): boolean
 ```
 
-**Se empareja POR NÚMERO**, y es la decisión con más consecuencias del
-subsistema. El paquete original emparejaba contra «la conversación activa más
-reciente», lo que impedía correr dos pruebas a la vez **para siempre**.
+**Se empareja por el PAR (nuestra línea, su número)**, y es la decisión con más
+consecuencias del subsistema. El paquete original emparejaba contra «la
+conversación activa más reciente», lo que impedía correr dos pruebas a la vez
+**para siempre**. Emparejar por número arregló eso; el par agregó el otro eje —
+tres de NUESTRAS líneas contra el MISMO negocio, donde el número ya no alcanza
+porque las tres conversaciones lo comparten.
 
-Dos caminos:
+La desambiguación tiene tres escalones, en orden:
+
+1. el `channel_uuid` del payload;
+2. **nuestro propio número** — para un entrante, Callbell lo manda en `from` (al
+   revés de lo que dice la intuición) y el parser lo junta con los demás;
+3. **a ciegas**: la más reciente que espera respuesta, y queda escrito en el log
+   con las palabras `desambiguación a ciegas entre líneas`. Buscá esa frase el día
+   que dos conversaciones simultáneas cruzen un mensaje.
+
+El escalón 3 no es una rendición: es el comportamiento que había antes de que
+existieran varias líneas, y **con una sola línea es exactamente correcto**.
+
+`porLinea()` **nunca devuelve una lista vacía.** Si el payload trae un
+`channel_uuid` que no coincide con ninguna candidata, lo más probable no es que el
+mensaje no sea de ninguna: es que el proveedor cambió el nombre del campo.
+Descartar ahí perdería el entrante en silencio, que es el peor modo de fallo del
+subsistema — sin el entrante la conversación se cuelga y el negocio queda
+reportado como «no contestó».
+
+Dos caminos, después de desambiguar:
 1. la conversación espera respuesta de ese número;
 2. **continuación de ráfaga** — el primer chunk ya bajó `awaiting_reply` y los
    siguientes no tendrían a quién pegarse. Sin este camino la transcripción
@@ -419,10 +605,17 @@ consecuencia práctica es buena: cerrar una prueba nunca espera a un modelo.
 
 ```ts
 lanzarDesdeElDiagnostico({ organizationId, sessionId }): Promise<ResultadoLanzamiento>
-lanzarDesdeAdmin(args): Promise<ResultadoLanzamiento & { error?: string }>
 configDePruebas(): Promise<Config>
 CLAVE_CONFIG = 'pruebas.bateria'
 ```
+
+**`lanzarDesdeAdmin()` se fue a `crearLote()` en ADR 0027.** No fue una mudanza
+estética: hacía casi lo mismo con otras palabras, y tener dos formas de crear una
+prueba a mano era la mitad de la confusión que esa decisión vino a arreglar. Hoy
+todo lo manual pasa por `crearLote()`; una conversación suelta es su caso 1×1×1.
+
+Lo que queda acá es el camino **automático**, que es el único que tiene los cuatro
+frenos completos — porque es el único donde no hay nadie mirando.
 
 `lanzarDesdeElDiagnostico` **nunca lanza** y se llama al terminar el research.
 Ese momento es el primero donde existen los números y el material, y da 4–5
@@ -430,13 +623,39 @@ minutos de ventaja sobre el cliente.
 
 **Los cuatro frenos**, y ninguno es opcional:
 
-1. `authorize('smoketest.probe')` — `external_comms`, techo de plataforma **4**.
+1. `authorize('smoketest.probe')` — `self_outreach`, techo de plataforma **4**.
+   **No** `external_comms`: esa clasificación la dejó bloqueada siempre, porque
+   el plan y la autonomía del prospecto la topaban en nivel 1. Ver `0016`.
 2. **Propiedad del número** — en el camino automático tiene que estar publicado
    en el sitio de esa organización. Le escribimos al dueño, no a un tercero.
 3. **Enfriamiento 72 h**, global por número.
 4. **Bloqueo** — ningún camino automático lo revierte.
 
 Apagado sin desplegar: `settings['pruebas.bateria'].activo = false`.
+
+### Lo que rige en cada camino, sin eufemismos
+
+Los cuatro frenos se escribieron pensando en el disparo automático. El camino
+manual tiene otros, y hay que decirlo en voz alta (ADR 0027, decisión 5):
+
+| Freno | Automático | Manual (`crearLote`) |
+|---|---|---|
+| `authorize('smoketest.probe')` | siempre | **solo si hay organización vinculada** |
+| Número publicado en el sitio de esa organización | siempre | nunca — lo eligió una persona |
+| Enfriamiento de 72 h | siempre | no |
+| Bloqueo («no me escriban») | siempre | **siempre, y no lo levanta nada** |
+| Espaciado 90 s por par (línea, número) | siempre | siempre |
+| Apagado de emergencia en `settings` | siempre | no |
+
+Los tres primeros **no pueden** aplicar al camino manual: no hay organización
+contra la que autorizar cuando el operador escribe un número suelto, y el
+enfriamiento existe para que cinco recargas de la landing no manden cinco
+mensajes — acá hay una persona que apretó un botón una vez, y que muchas veces
+necesita volver a probar el mismo número después de haberle cambiado algo al
+agente. Lo que se paga a cambio: el bloqueo es terminal en los dos caminos, la
+cuenta de mensajes va escrita en el botón, y `GET /api/admin/pruebas?telefono=…`
+le dice al operador cuándo fue la última prueba contra ese número **antes** de
+mandar.
 
 ---
 
@@ -460,7 +679,13 @@ que corre es el cronómetro, y es real.
 ## `lote.ts`
 
 ```ts
-crearLote(args): Promise<ResultadoLote>
+crearLote({
+  nombre, proposito, objetivos,
+  canales?,            // nuestras líneas. vacío = la primera activa
+  plantillas?,         // camino A · moldes compilados contra el research
+  aMedida?,            // camino B · el guion que escribió una persona
+  maxConcurrentes, ritmoSegundos, creadoPor, notas?,
+}): Promise<ResultadoLote>
 avanzarLote(loteId): Promise<{ arrancadas: number }>
 cerrarLoteSiTerminó(loteId): Promise<void>
 pausarLote(loteId, estado): Promise<void>
@@ -468,6 +693,35 @@ estadoDelLote(loteId): Promise<EstadoDelLote>
 objetivosDeOrganizaciones(orgIds): Promise<ObjetivoDeLote[]>
 lotesRecientes(limite?): Promise<LoteRow[]>
 ```
+
+En pantalla esto se llama **la prueba**, y es lo único que crea conversaciones a
+mano desde ADR 0027:
+
+```
+números × líneas × guiones = conversaciones
+```
+
+| Números | Líneas | Qué es |
+|---|---|---|
+| 1 | 1 | una conversación suelta |
+| 1 | 3 | tres clientes distintos escribiéndole a la vez |
+| 30 | 1 | el barrido de prospección |
+| 30 | 3 | lo mismo, tres veces más rápido |
+
+`ResultadoLote.conversaciones` trae los ids en orden de arranque. Con uno solo, la
+pantalla siguiente es la transcripción y no el grupo: una herramienta que no deja
+ver lo que acaba de hacer no se vuelve a usar (decisión 6).
+
+**El orden de inserción no es cosmético.** Las filas se agrupan por OBJETIVO y no
+por línea, porque `avanzarLote` arranca en orden de creación: así un tope de
+concurrencia de 3 abre las tres líneas contra el primer negocio antes de pasar al
+segundo. Eso da dos cosas — es exactamente el escenario que se quiere medir cuando
+hay varias líneas, y en un barrido de treinta hace que el primer negocio esté
+completo y legible en minutos en vez de al final.
+
+`siguientePendiente` mira la ocupación **por par (línea, número)**. Bloquear por
+número dejaría dos de las tres líneas esperando para siempre a una conversación
+que nunca las libera.
 
 **`max_concurrentes` y `ritmo_segundos` no son afinación.** Treinta clientes por
 tres pruebas son 90 conversaciones desde UNA línea de WhatsApp; para el
@@ -479,9 +733,13 @@ de cada prueba (vía webhook) y la pantalla del admin. Es el único lugar del
 subsistema donde se duerme, y está acotado por `PRESUPUESTO_MS = 200 s`: no
 esperamos un evento externo, espaciamos a propósito nuestros propios envíos.
 
-`crearLote` **omite en vez de fallar**: si una compilación falla, ese par sale
-de la tanda con su motivo. Un lote de 30 clientes que muere en el cuarto no
+`crearLote` **omite en vez de fallar**: si una compilación falla, ese par sale de
+la prueba con su motivo. Una prueba de 30 clientes que muere en el cuarto no
 sirve. Los motivos se devuelven en `omitidos` y **hay que mostrarlos**.
+
+Un plan se compila por **(objetivo × unidad)**, no por línea: las tres líneas
+mandan el mismo guion, que es justamente lo que hace comparables las tres
+respuestas.
 
 ---
 
@@ -544,10 +802,17 @@ node scripts/test-lotes-e-informes.mjs  # la aritmética del informe
 ```
 
 Los dos verifican **invariantes leyendo el código fuente** además del esquema:
-que ningún esquema que va a OpenAI pida una cifra, que no haya `await` pelado,
-que el webhook nunca devuelva 5xx, que la correlación siga siendo por teléfono,
-y que `avanzarLote` siga respetando el tope. Es feo y es la única forma que hay
-de que esas reglas no se erosionen.
+que ningún esquema que va a OpenAI pida una cifra, que no haya `await` pelado, que
+el webhook nunca devuelva 5xx, que la correlación desambigue entre líneas, que
+`avanzarLote` respete el tope, que `guion.ts` no importe nada de servidor —si lo
+hiciera, la vista previa del formulario dejaría de calcularse igual que lo que se
+manda— y que **la rama del guion siga corriendo antes de los detectores de
+cierre**. Esa última es una invariante de posición: un refactor la rompe sin
+cambiar una línea, y sin la prueba nadie se enteraría hasta que un guion de cuatro
+preguntas mandara dos.
+
+Es feo leer el código fuente desde una prueba, y es la única forma que hay de que
+esas reglas no se erosionen.
 
 **Lo que NO cubren:** el motor por eventos. Turnos, ráfagas y correlación
 necesitan un proveedor respondiendo, y simularlo probaría la simulación. Se
@@ -556,10 +821,32 @@ verifica a mano con el procedimiento de
 
 ---
 
+## El contrato HTTP del admin
+
+| Ruta | Método | Para qué |
+|---|---|---|
+| `/api/admin/pruebas` | **POST** | **La única forma de crear una prueba a mano.** `números × líneas × guiones`. Devuelve `destino`: la transcripción si dio una conversación, la pantalla de la prueba si dio más |
+| `/api/admin/pruebas` | GET | `?telefono=…` — si está bloqueado, cuándo fue la última prueba, si ya lo conocemos con nombre y organización. Es lo que reemplaza al enfriamiento en el camino manual |
+| `/api/admin/pruebas` | PATCH | cancelar · recalificar · desbloquear un número |
+| `/api/admin/pruebas/redactar` | POST | El **borrador** de un guion a partir de dos líneas escritas a las apuradas. Nunca falla hacia afuera: sin llave devuelve las sugerencias determinísticas de `guion.ts` con `degradado: true` |
+| `/api/admin/pruebas/lotes/[loteId]` | GET | Estado de la prueba **y su motor**: empuja la cola en `after()` |
+| `/api/admin/pruebas/lotes/[loteId]` | PATCH | pausar · reanudar · cancelar lo que falta |
+| `/api/admin/pruebas/canales` | POST / DELETE | Nuestras líneas. El DELETE apaga, no borra: las conversaciones viejas apuntan al canal con una clave foránea |
+| `/api/admin/pruebas/diagnose` | GET / POST | Qué variables faltan · mandar un mensaje de prueba desde una línea |
+| `/api/pruebas/estado/[runId]` | GET | El estado en vivo **y la red de seguridad real** del motor |
+| `/api/webhooks/callbell` | POST | La entrada de todo. **Siempre devuelve 200** |
+
+`POST /api/admin/pruebas/lotes` **ya no existe**. Era el segundo camino de
+creación y era la mitad de la confusión; hay una prueba que verifica que no
+vuelva.
+
+---
+
 ## Referencias
 
 - [ADR 0025 · El smoke tester como evidencia](../adr/0025-el-smoke-tester-como-evidencia.md)
 - [ADR 0026 · El lote y el informe](../adr/0026-el-lote-y-el-informe.md)
+- [ADR 0027 · La prueba a medida, y varias líneas](../adr/0027-la-prueba-a-medida-y-las-lineas.md)
 - [wiki/23](../wiki/23-smoke-tester.md) · [wiki/24](../wiki/24-lotes-e-informes.md)
 - [`docs/api/README.md`](README.md) — el contrato HTTP
 - `docs/referencia/smoke-tester/` — el paquete del que sale esto, con sus 12

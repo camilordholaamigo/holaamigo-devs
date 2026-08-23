@@ -11,7 +11,7 @@ import { isoDaysAgo } from '@/lib/utils';
  * POST /api/admin/pruebas/informes — armar el informe de una organización.
  *
  * Se puede pedir para una organización suelta o para todas las de un lote. Lo
- * segundo es el caso real: se corre la tanda de treinta clientes y después se
+ * segundo es el caso real: se corre la prueba de treinta clientes y después se
  * generan los treinta informes de una.
  *
  * El informe queda `publicado: true` con su `share_token`. Publicado no

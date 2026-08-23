@@ -2,221 +2,78 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Card } from '@/components/ui';
+import { Badge, Card } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import type { CanalRow, PlantillaRow } from '@/lib/pruebas/types';
+import type { CanalRow } from '@/lib/pruebas/types';
 
 /**
- * Los tres formularios de /admin/pruebas.
+ * Las piezas con estado de /admin/pruebas.
  *
  * Comparten una regla que se ganó a los golpes en el paquete que portamos:
  * **si algo falla, el formulario se queda abierto con el error a la vista.**
- * Solo se limpia en el camino feliz. En una herramienta de diagnóstico el
- * error ES el producto; cerrar el formulario cuando algo sale mal convierte un
- * fallo de dos segundos —«la llave venció»— en una investigación de veinte
- * minutos.
+ * Solo se limpia en el camino feliz. En una herramienta de diagnóstico el error
+ * ES el producto; cerrar el formulario cuando algo sale mal convierte un fallo
+ * de dos segundos —«la llave venció»— en una investigación de veinte minutos.
+ *
+ * El formulario de crear una prueba ya no vive acá: se fue a
+ * `components/prueba-nueva.tsx` y a su propia pantalla. Tenía tres pasos y una
+ * vista previa, y no cabía al lado de la configuración sin que las dos cosas
+ * parecieran del mismo peso — que era justamente el problema.
  */
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CREAR UNA PRUEBA
+// NUESTRAS LÍNEAS
 // ═══════════════════════════════════════════════════════════════════════════
 
-export function CrearPrueba({
-  plantillas,
-  canales,
-}: {
-  plantillas: PlantillaRow[];
-  canales: CanalRow[];
-}) {
-  const router = useRouter();
-  const [telefono, setTelefono] = useState('');
-  const [nombre, setNombre] = useState('');
-  const [orgId, setOrgId] = useState('');
-  const [canalId, setCanalId] = useState(canales[0]?.id ?? '');
-  const [contexto, setContexto] = useState('');
-  const [elegidas, setElegidas] = useState<string[]>(
-    plantillas.some((p) => p.id === 'servicio') ? ['servicio'] : plantillas.slice(0, 1).map((p) => p.id),
-  );
-  const [enviando, setEnviando] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
-
-  const alternar = (id: string) =>
-    setElegidas((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
-
-  async function enviar(e: React.FormEvent) {
-    e.preventDefault();
-    setError(null);
-    setOk(null);
-
-    if (elegidas.length === 0) {
-      setError('Elegí al menos un tipo de prueba.');
-      return;
-    }
-
-    setEnviando(true);
-    try {
-      const res = await fetch('/api/admin/pruebas', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          telefono,
-          nombre: nombre.trim() || null,
-          plantillas: elegidas,
-          organizationId: orgId.trim() || null,
-          canalId: canalId || null,
-          contexto: contexto.trim() || null,
-        }),
-      });
-      const json = await res.json();
-
-      if (!res.ok) {
-        setError(json.error ?? 'No se pudo crear la prueba.');
-        return;
-      }
-
-      setOk(
-        `${json.pruebas} prueba${json.pruebas === 1 ? '' : 's'} en marcha. El primer mensaje ya salió.`,
-      );
-      setTelefono('');
-      setNombre('');
-      setContexto('');
-      router.refresh();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Falló la petición.');
-    } finally {
-      setEnviando(false);
-    }
-  }
+/**
+ * Varias líneas, no una.
+ *
+ * Hasta ADR 0027 esta pantalla editaba «nuestra línea», en singular, porque el
+ * motor solo sabía usar una. Ahora cada línea es un hilo de WhatsApp propio y
+ * tener tres es la unidad de escala: es lo que permite ver si el agente de un
+ * negocio les contesta igual a tres clientes a la vez, y es lo que sube el techo
+ * de conversaciones diarias sin acercarse al umbral de spam de Meta.
+ *
+ * Una línea no se borra: se apaga. Las conversaciones viejas apuntan a ella con
+ * una clave foránea y borrarla se llevaría el historial que sirve justamente
+ * para comparar contra las nuevas.
+ */
+export function LineasDeCallbell({ canales }: { canales: CanalRow[] }) {
+  const [agregando, setAgregando] = useState(canales.length === 0);
 
   return (
-    <Card>
-      <form onSubmit={enviar} className="space-y-5 p-6">
-        <div>
-          <h3 className="text-[15px] font-semibold text-ink">Probar una línea</h3>
-          <p className="mt-1 text-[13px] leading-relaxed text-ink-faint">
-            No hace falta diagnóstico. Con el id de una organización, la prueba se
-            compila con su research y además mide exactitud contra su sitio; sin
-            él, mide atención: si contestan, en cuánto y si proponen algo.
-          </p>
-        </div>
+    <div className="space-y-3">
+      {canales.map((c) => (
+        <LineaEditable key={c.id} canal={c} />
+      ))}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Campo
-            etiqueta="Número al que le escribimos"
-            valor={telefono}
-            onChange={setTelefono}
-            placeholder="+57 300 123 4567"
-            requerido
-          />
-          <Campo
-            etiqueta="A nombre de quién"
-            valor={nombre}
-            onChange={setNombre}
-            placeholder="Ferretería El Tornillo"
-          />
-        </div>
-
-        <div className="space-y-2">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-            Qué pruebas
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {plantillas.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => alternar(p.id)}
-                title={p.descripcion}
-                className={cn(
-                  'rounded-full border px-3.5 py-1.5 text-[13px] font-medium transition',
-                  elegidas.includes(p.id)
-                    ? 'border-ink bg-ink text-paper'
-                    : 'border-line text-ink-soft hover:border-line-strong hover:text-ink',
-                )}
-              >
-                {p.nombre}
-              </button>
-            ))}
-          </div>
-          {elegidas.length > 1 ? (
-            <p className="text-[12px] text-ink-faint">
-              Van una detrás de otra contra el mismo número: dos conversaciones a la
-              vez caen en el mismo hilo de WhatsApp y ninguna mide nada.
-            </p>
-          ) : null}
-        </div>
-
-        <details className="group">
-          <summary className="cursor-pointer text-[13px] font-medium text-ink-faint transition hover:text-ink">
-            Opciones
-          </summary>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <Campo
-              etiqueta="ID de organización (opcional)"
-              valor={orgId}
-              onChange={setOrgId}
-              placeholder="uuid"
-            />
-            <div className="space-y-1.5">
-              <label className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-                Desde qué línea
-              </label>
-              <select
-                value={canalId}
-                onChange={(e) => setCanalId(e.target.value)}
-                className="w-full rounded-xl border border-line bg-paper-raised px-3.5 py-2.5 text-[14px] text-ink outline-none transition focus:border-line-strong"
-              >
-                {canales.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.label} · {c.phone_e164}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="sm:col-span-2 space-y-1.5">
-              <label className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-                Contexto para el compilador
-              </label>
-              <textarea
-                value={contexto}
-                onChange={(e) => setContexto(e.target.value)}
-                rows={3}
-                placeholder="Lo que sepas del negocio y quieras que la prueba tenga en cuenta."
-                className="w-full rounded-xl border border-line bg-paper-raised px-3.5 py-2.5 text-[14px] leading-relaxed text-ink outline-none transition focus:border-line-strong"
-              />
-            </div>
-          </div>
-        </details>
-
-        {error ? <Aviso tono="error">{error}</Aviso> : null}
-        {ok ? <Aviso tono="ok">{ok}</Aviso> : null}
-
+      {agregando ? (
+        <LineaEditable canal={null} onCerrar={() => setAgregando(false)} />
+      ) : (
         <button
-          type="submit"
-          disabled={enviando || !telefono.trim() || canales.length === 0}
-          className="rounded-xl bg-ink px-5 py-2.5 text-[14px] font-semibold text-paper transition hover:bg-ink/90 disabled:opacity-40"
+          type="button"
+          onClick={() => setAgregando(true)}
+          className="w-full rounded-[14px] border border-dashed border-line-strong px-5 py-4 text-[13.5px] font-medium text-ink-soft transition hover:border-ink hover:text-ink"
         >
-          {enviando ? 'Escribiendo…' : 'Escribir ahora'}
+          + Agregar otra línea
         </button>
-
-        {canales.length === 0 ? (
-          <p className="text-[12.5px] text-leak">
-            No hay ninguna línea activa. Configurá una abajo antes de probar.
-          </p>
-        ) : null}
-      </form>
-    </Card>
+      )}
+    </div>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// NUESTRA LÍNEA
-// ═══════════════════════════════════════════════════════════════════════════
-
-export function EditarCanal({ canal }: { canal: CanalRow | null }) {
+function LineaEditable({
+  canal,
+  onCerrar,
+}: {
+  canal: CanalRow | null;
+  onCerrar?: () => void;
+}) {
   const router = useRouter();
-  const [label, setLabel] = useState(canal?.label ?? 'Callbell · línea de pruebas');
+  const nueva = canal === null;
+
+  const [abierta, setAbierta] = useState(nueva);
+  const [label, setLabel] = useState(canal?.label ?? '');
   const [phone, setPhone] = useState(canal?.phone_e164 ?? '');
   const [channelUuid, setChannelUuid] = useState(canal?.channel_uuid ?? '');
   const [templateUuid, setTemplateUuid] = useState(canal?.template_uuid ?? '');
@@ -251,6 +108,7 @@ export function EditarCanal({ canal }: { canal: CanalRow | null }) {
         return;
       }
       setOk('Guardado. Toma efecto en menos de 30 segundos.');
+      if (nueva) onCerrar?.();
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Falló la petición.');
@@ -278,20 +136,42 @@ export function EditarCanal({ canal }: { canal: CanalRow | null }) {
     }
   }
 
-  return (
-    <Card>
-      <form onSubmit={guardar} className="space-y-5 p-6">
-        <div>
-          <h3 className="text-[15px] font-semibold text-ink">Nuestra línea</h3>
-          <p className="mt-1 text-[13px] leading-relaxed text-ink-faint">
-            El número desde el que escribimos y su identificador en Callbell. Se
-            cambian acá y toman efecto sin desplegar. La llave de la API va en
-            Vercel: eso es un secreto, esto es un dato de operación.
-          </p>
+  if (!abierta && canal) {
+    return (
+      <Card>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-5 py-3.5">
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[14px] font-medium text-ink">{canal.label}</p>
+            <p className="tnum text-[12.5px] text-ink-faint">
+              {canal.phone_e164} · {canal.channel_uuid.slice(0, 8)}…
+            </p>
+          </div>
+          <Badge tone={canal.activo ? 'money' : 'muted'}>
+            {canal.activo ? 'activa' : 'apagada'}
+          </Badge>
+          <button
+            type="button"
+            onClick={() => setAbierta(true)}
+            className="shrink-0 text-[13px] font-medium text-ink underline decoration-line-strong underline-offset-2 transition hover:decoration-ink"
+          >
+            Editar
+          </button>
         </div>
+      </Card>
+    );
+  }
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Campo etiqueta="Nombre interno" valor={label} onChange={setLabel} requerido />
+  return (
+    <Card className={nueva ? 'border-ink/30' : undefined}>
+      <form onSubmit={guardar} className="space-y-4 p-5">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Campo
+            etiqueta="Nombre interno"
+            valor={label}
+            onChange={setLabel}
+            placeholder="Callbell · línea 2"
+            requerido
+          />
           <Campo
             etiqueta="Nuestro número"
             valor={phone}
@@ -321,7 +201,7 @@ export function EditarCanal({ canal }: { canal: CanalRow | null }) {
             onChange={(e) => setActivo(e.target.checked)}
             className="h-4 w-4 rounded border-line-strong"
           />
-          Activa
+          Activa · se puede elegir al crear una prueba
         </label>
 
         {error ? <Aviso tono="error">{error}</Aviso> : null}
@@ -331,45 +211,55 @@ export function EditarCanal({ canal }: { canal: CanalRow | null }) {
           <button
             type="submit"
             disabled={guardando}
-            className="rounded-xl bg-ink px-5 py-2.5 text-[14px] font-semibold text-paper transition hover:bg-ink/90 disabled:opacity-40"
+            className="rounded-xl bg-ink px-4 py-2.5 text-[14px] font-semibold text-paper transition hover:bg-ink/90 disabled:opacity-40"
           >
-            {guardando ? 'Guardando…' : 'Guardar'}
+            {guardando ? 'Guardando…' : nueva ? 'Agregar línea' : 'Guardar'}
+          </button>
+          <button
+            type="button"
+            onClick={() => (nueva ? onCerrar?.() : setAbierta(false))}
+            className="text-[13px] font-medium text-ink-faint transition hover:text-ink"
+          >
+            Cancelar
           </button>
         </div>
 
         {/* El único chequeo que vale es mandar un mensaje. Validar el formato
-            del uuid daría una falsa sensación de que está bien configurado. */}
-        <div className="space-y-2 border-t border-line pt-5">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
-            Probar el envío
-          </p>
-          <div className="flex flex-wrap gap-2">
-            <input
-              value={prueba}
-              onChange={(e) => setPrueba(e.target.value)}
-              placeholder="Tu propio celular"
-              className="flex-1 rounded-xl border border-line bg-paper-raised px-3.5 py-2.5 text-[14px] text-ink outline-none transition focus:border-line-strong"
-            />
-            <button
-              type="button"
-              onClick={mandarPrueba}
-              disabled={!prueba.trim()}
-              className="rounded-xl border border-line-strong px-4 py-2.5 text-[14px] font-medium text-ink transition hover:bg-paper-sunken disabled:opacity-40"
-            >
-              Mandar
-            </button>
+            del uuid daría una falsa sensación de que está bien configurado, y
+            acá vive la mitad de los problemas de puesta en marcha. */}
+        {canal ? (
+          <div className="space-y-2 border-t border-line pt-4">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-ink-faint">
+              Probar el envío desde esta línea
+            </p>
+            <div className="flex flex-wrap gap-2">
+              <input
+                value={prueba}
+                onChange={(e) => setPrueba(e.target.value)}
+                placeholder="Tu propio celular"
+                className="min-w-0 flex-1 rounded-xl border border-line bg-paper-raised px-3.5 py-2.5 text-[14px] text-ink outline-none transition focus:border-line-strong"
+              />
+              <button
+                type="button"
+                onClick={mandarPrueba}
+                disabled={!prueba.trim()}
+                className="rounded-xl border border-line-strong px-4 py-2.5 text-[14px] font-medium text-ink transition hover:bg-paper-sunken disabled:opacity-40"
+              >
+                Mandar
+              </button>
+            </div>
+            {resultado ? (
+              <p className="text-[13px] leading-relaxed text-ink-soft">{resultado}</p>
+            ) : null}
           </div>
-          {resultado ? (
-            <p className="text-[13px] leading-relaxed text-ink-soft">{resultado}</p>
-          ) : null}
-        </div>
+        ) : null}
       </form>
     </Card>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// ACCIONES SOBRE UNA PRUEBA
+// ACCIONES SOBRE UNA CONVERSACIÓN
 // ═══════════════════════════════════════════════════════════════════════════
 
 export function AccionesDePrueba({

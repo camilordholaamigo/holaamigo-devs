@@ -63,6 +63,24 @@ export async function canalActivo(canalId?: string | null): Promise<CanalRow | n
   return (data?.[0] as CanalRow | undefined) ?? null;
 }
 
+/**
+ * Todas nuestras líneas activas, en orden de creación.
+ *
+ * Varias líneas es la unidad de escala del smoke tester (ADR 0027): tres de
+ * nuestros números escribiéndole al mismo negocio es la única forma de ver si su
+ * agente les contesta igual a tres clientes a la vez. `canalActivo()` sigue
+ * existiendo para el camino automático del diagnóstico, que usa una sola —la
+ * primera— y no tiene por qué elegir.
+ */
+export async function canalesActivos(): Promise<CanalRow[]> {
+  const { data } = await db()
+    .from('smoke_channels')
+    .select('id, label, provider, phone_e164, channel_uuid, template_uuid, activo, notas')
+    .eq('activo', true)
+    .order('created_at', { ascending: true });
+  return (data ?? []) as CanalRow[];
+}
+
 export async function canalPorId(canalId: string): Promise<CanalRow> {
   return unwrap(
     await db()
@@ -246,6 +264,16 @@ export interface Entrante {
    * las conversaciones que esperan respuesta. La que matchee, matcheó.
    */
   candidatos: string[];
+  /**
+   * El canal del proveedor por el que entró, si el payload lo dice.
+   *
+   * Es lo que desambigua cuando dos de NUESTRAS líneas tienen una conversación
+   * viva contra el mismo negocio: son dos hilos distintos y el mensaje pertenece
+   * a uno solo. Cuando no viene, el otro camino es nuestro propio número, que
+   * para un entrante también aparece en `candidatos`. Y cuando no viene ninguno
+   * de los dos, se desambigua a ciegas y queda escrito en el log (ADR 0027).
+   */
+  canalUuid: string | null;
   texto: string;
   /** `sent` es eco de lo que mandamos nosotros y hay que ignorarlo. */
   direccion: 'entrante' | 'saliente';
@@ -380,12 +408,46 @@ export function parsearEntrante(raw: unknown): Entrante | null {
 
   return {
     candidatos: [...candidatos],
+    canalUuid: extraerCanal(payload) ?? extraerCanal(sobre),
     texto: texto.slice(0, 4_000),
     direccion,
     nombre,
     proveedorId,
     recibidoAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Busca el identificador de canal del proveedor.
+ *
+ * En Callbell es `channel_uuid`; la aplicación que reenvía manda `channelUuid` o
+ * un objeto `channel` con su `uuid` adentro. Se aceptan las tres formas y se
+ * devuelve null sin drama si no hay ninguna: la desambiguación tiene otro camino
+ * y no puede depender de que el proveedor no cambie nunca el nombre del campo.
+ */
+function extraerCanal(nodo: unknown, profundidad = 0): string | null {
+  if (profundidad > 3 || !nodo || typeof nodo !== 'object') return null;
+  const obj = nodo as Record<string, unknown>;
+
+  for (const clave of ['channel_uuid', 'channelUuid', 'channel_id', 'channelId']) {
+    const v = obj[clave];
+    if (typeof v === 'string' && v.trim()) return v.trim();
+  }
+
+  const canal = obj.channel;
+  if (typeof canal === 'string' && canal.trim()) return canal.trim();
+  if (canal && typeof canal === 'object') {
+    const uuid = (canal as Record<string, unknown>).uuid;
+    if (typeof uuid === 'string' && uuid.trim()) return uuid.trim();
+  }
+
+  for (const valor of Object.values(obj)) {
+    if (valor && typeof valor === 'object') {
+      const found = extraerCanal(valor, profundidad + 1);
+      if (found) return found;
+    }
+  }
+  return null;
 }
 
 /**
@@ -404,5 +466,6 @@ export function resumirPayload(raw: unknown): Record<string, unknown> {
     claves_payload: typeof payload === 'object' ? Object.keys(payload).slice(0, 20) : [],
     event: typeof obj.event === 'string' ? obj.event : null,
     status: payload?.status ?? null,
+    canal: extraerCanal(payload) ?? extraerCanal(obj),
   };
 }

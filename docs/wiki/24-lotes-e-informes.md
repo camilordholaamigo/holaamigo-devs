@@ -1,7 +1,8 @@
-# 24 · Lotes e informes
+# 24 · Pruebas e informes
 
-[wiki/23](./23-smoke-tester.md) cuenta cómo se prueba **una** línea. Esto cuenta
-cómo se prueban treinta y cómo eso se convierte en algo que se puede mandar.
+[wiki/23](./23-smoke-tester.md) cuenta cómo funciona **una conversación**. Esto
+cuenta cómo se corren muchas a la vez y cómo eso se convierte en algo que se puede
+mandar.
 
 Son las dos mitades del mismo motor:
 
@@ -10,22 +11,48 @@ QA       · ¿a cuál de mis clientes se le rompió la IA esta semana?
 GROWTH   · mandale a este prospecto lo que pasó cuando le escribimos
 ```
 
-La tesis está en [ADR 0026](../adr/0026-el-lote-y-el-informe.md).
+La tesis está en [ADR 0026](../adr/0026-el-lote-y-el-informe.md), y
+[ADR 0027](../adr/0027-la-prueba-a-medida-y-las-lineas.md) generalizó el objeto.
+
+## Una prueba es un producto cartesiano
+
+En el código se llama `lote` y en la base `smoke_batches`; **en pantalla se llama
+la prueba**, y es lo único que crea conversaciones a mano:
+
+```
+números × líneas × guiones = conversaciones
+```
+
+| Números | Líneas | Qué es |
+|---|---|---|
+| 1 | 1 | una conversación suelta |
+| 1 | 3 | tres clientes distintos escribiéndole al mismo negocio a la vez |
+| 30 | 1 | el barrido de prospección |
+| 30 | 3 | lo mismo, tres veces más rápido |
+
+Hasta ADR 0026 esto se llamaba «tanda» y solo modelaba la tercera fila. El nombre
+describía el diseño y no el uso, y por eso nadie sabía qué hacía el botón. **La
+palabra no se usa más.**
+
+Con una sola conversación la pantalla siguiente es la transcripción, no el grupo:
+una herramienta que no deja ver lo que acaba de hacer no se vuelve a usar.
 
 ---
 
 ## El recorrido
 
 ```
-/admin/pruebas → «Nueva tanda»
-   ├── se eligen las organizaciones (los números salen de smoke_targets)
-   ├── se eligen las pruebas por línea
-   └── se fijan los dos frenos: cuántas a la vez, cada cuánto
+/admin/pruebas/nueva
+   ├── a quién: un número a mano, varios pegados, u organizaciones de la lista
+   ├── qué se dice: un guion a medida, o los moldes compilados del research
+   ├── desde qué líneas nuestras: una o varias
+   └── los dos frenos: cuántas a la vez, cada cuánto
    ↓
 crearLote()
-   ├── authorize() por organización
-   ├── compila una prueba por (línea × plantilla), en paralelo
-   ├── omite las que no se pueden, con su motivo
+   ├── authorize() por organización (las que tengan una)
+   ├── compila un plan por (objetivo × guion), en paralelo
+   ├── lo cruza con las líneas → una conversación por (objetivo × guion × línea)
+   ├── omite lo que no se puede, con su motivo
    └── avanzarLote() arranca las primeras
    ↓
 … cada prueba que cierra libera un cupo y empuja la siguiente …
@@ -52,7 +79,11 @@ se cuentan las aperturas → a quién llamar mañana
 
 Treinta clientes × tres pruebas = **noventa conversaciones desde una sola línea
 de WhatsApp**. Abrirlas juntas es, para el clasificador de Meta, la firma exacta
-de un emisor de spam. Lo que se pierde no es la tanda: es el número.
+de un emisor de spam. Lo que se pierde no es la prueba: es el número.
+
+Varias líneas suben ese techo —cada una es un emisor distinto— pero **no lo
+eliminan**: el tope sigue siendo del lote entero, no por línea, porque el riesgo
+que se está administrando es el de nuestra cuenta.
 
 | Control | Por defecto | Qué hace |
 |---|---|---|
@@ -72,7 +103,7 @@ que ver qué está apretando.
 
 | Quién | Cuándo | Alcance |
 |---|---|---|
-| `crearLote()` | al armar la tanda | arranca las primeras |
+| `crearLote()` | al armar la prueba | arranca las primeras |
 | El webhook | cada vez que una prueba cierra | libera un cupo y arranca la siguiente |
 | La pantalla del lote | cada 5 s mientras esté abierta | **el motor real mientras alguien mira** |
 | El cron | 1×/día en Hobby | despierta lo que se trabó entero |
@@ -90,7 +121,7 @@ tienen una conversación viva **de cualquier lote**.
 
 ### Omitir en vez de fallar
 
-Si una compilación falla, ese par sale de la tanda **con su motivo** y el resto
+Si una compilación falla, ese par sale de la prueba **con su motivo** y el resto
 sigue. Un lote de treinta que muere en el cuarto por un research incompleto no
 sirve para nada.
 
@@ -192,7 +223,7 @@ razón: el cliente lo reenvía a su socio y ese reenvío es distribución.
 
 ### Las barras de tiempo
 
-Escala **lineal** contra el peor tiempo de la tanda, no logarítmica. Con una
+Escala **lineal** contra el peor tiempo de la prueba, no logarítmica. Con una
 conversación de 2 minutos y otra de 40, la primera queda como una astilla — y
 esa astilla **es** la información. Comprimirla para que «se vean bien las dos»
 sería mentir con la geometría.
@@ -247,26 +278,46 @@ decide.
 
 ## Cómo se usa · el ciclo de QA semanal
 
-1. `/admin/pruebas` → **Nueva tanda** → propósito `QA de clientes`.
-2. **Todas** las organizaciones, prueba `servicio`, 4 concurrentes, 45 s.
-   Treinta líneas ≈ hora y media.
+1. `/admin/pruebas` → **Nueva prueba**.
+2. En «QA de clientes», **todas** las organizaciones. Una línea nuestra, 4
+   concurrentes, 45 s. Treinta números ≈ hora y media.
 3. Dejar la pestaña abierta si se puede — es lo que más rápido la empuja.
 4. Al terminar: **Generar los informes**.
 5. Ordenar por hallazgos y llamar a los tres peores.
 
-Para prospección, lo mismo con `proposito: prospeccion`, la prueba `ventas`, y
-revisando el borrador de correo antes de mandarlo.
+Para prospección, lo mismo apuntando a números escritos a mano y revisando el
+borrador de correo antes de mandarlo.
+
+### Y el ciclo que antes no existía
+
+**Auditar un bot ajeno en treinta segundos.** `/admin/pruebas/nueva`, el número,
+dos líneas de contexto, tres preguntas, «Redactar borrador con IA», y listo. Sin
+research, sin organización, sin desplegar. Es lo que convierte esto de una parte
+del diagnóstico en un motor de prospección: hay millones de negocios con un bot
+contestando su WhatsApp y ninguna certeza de que funcione.
+
+**La misma pregunta a veinte negocios.** Modo guion, tres mensajes, veinte números
+pegados. Cero llamadas a modelo, y veinte respuestas comparables palabra por
+palabra porque salieron de las mismas palabras.
+
+**¿Aguanta tres clientes a la vez?** Un número, tres de nuestras líneas. La
+pantalla de la prueba pone las tres transcripciones lado a lado.
 
 ---
 
 ## Cómo depurar
 
-1. **La pantalla del lote** — el registro de abajo dice qué arrancó y cuándo.
-2. **¿No avanza?** Casi siempre es que las líneas están ocupadas por otro lote.
-   `select target_phone, estado from holaamigo.smoke_probes where estado='running'`.
-3. **¿El informe salió vacío?** `generarInforme` devuelve `null` cuando no hay
+1. **La pantalla de la prueba** — el registro de abajo dice qué arrancó, cuándo y
+   **desde qué línea**.
+2. **¿No avanza?** Casi siempre es que los hilos están ocupados por otra prueba.
+   El hilo es el par `(channel_id, target_phone)`, no el teléfono:
+   `select channel_id, target_phone, estado from holaamigo.smoke_probes where estado='running'`.
+3. **¿Con varias líneas solo arrancó una?** La ocupación se está mirando por
+   número y no por par. Corré `node scripts/test-smoke-tester.mjs`: hay un chequeo
+   para eso.
+4. **¿El informe salió vacío?** `generarInforme` devuelve `null` cuando no hay
    conversaciones. Un informe vacío es peor que ninguno.
-4. **¿Sin narrativa ni correo?** Falta `OPENAI_API_KEY`. Las cifras y los
+5. **¿Sin narrativa ni correo?** Falta `OPENAI_API_KEY`. Las cifras y los
    hallazgos están igual: no dependen del modelo.
 5. En la base:
    ```sql

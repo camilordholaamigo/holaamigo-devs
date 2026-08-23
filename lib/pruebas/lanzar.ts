@@ -5,7 +5,7 @@ import { authorize } from '@/lib/governance/authorize';
 import { canalActivo, hayTransporte } from '@/lib/pruebas/callbell';
 import { compilarPrueba, plantilla } from '@/lib/pruebas/compilar';
 import { arrancarPrueba, cancelarVivasContra, progreso } from '@/lib/pruebas/motor';
-import { numerosDelResearch, registrarObjetivos, aE164 } from '@/lib/pruebas/numeros';
+import { numerosDelResearch, registrarObjetivos } from '@/lib/pruebas/numeros';
 import type { PlanDePrueba, TargetRow } from '@/lib/pruebas/types';
 
 /**
@@ -15,8 +15,10 @@ import type { PlanDePrueba, TargetRow } from '@/lib/pruebas/types';
  * una es un mensaje de WhatsApp real, mandado desde nuestro número, a un
  * negocio que no nos escribió primero. Los frenos son, en orden de dureza:
  *
- *   1. `authorize()`. Escribirle a un tercero es `external_comms` y pasa por
- *      el catálogo o no pasa (ADR 0018).
+ *   1. `authorize()`. Pasa por el catálogo o no pasa (ADR 0018). La capacidad
+ *      es `self_outreach` y no `external_comms`: sale del edificio, pero el que
+ *      recibe es la propia organización. Clasificarla mal la dejó inalcanzable
+ *      durante toda la primera versión — ver la migración 0016.
  *   2. El número tiene que estar publicado EN EL SITIO DE ESA ORGANIZACIÓN.
  *      En el camino automático no hay forma de apuntarle a otro lado, y eso
  *      es lo que hace defendible el mensaje: le estamos escribiendo al dueño
@@ -196,103 +198,19 @@ async function objetivosDisponibles(
   });
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-// EL CAMINO MANUAL
-// ═══════════════════════════════════════════════════════════════════════════
-
-/**
- * Una prueba creada desde el admin, con o sin diagnóstico detrás.
- *
- * Acá NO hay filtro de propiedad del número: lo eligió una persona y esa
- * persona responde por él. Sí hay bloqueo —un número que pidió que no le
- * escribamos no se prueba ni a mano— porque eso no es una política nuestra,
- * es lo que pidió el que está del otro lado.
- */
-export async function lanzarDesdeAdmin(args: {
-  organizationId: string | null;
-  telefono: string;
-  nombre: string | null;
-  plantillas: string[];
-  canalId: string | null;
-  contextoManual: string | null;
-}): Promise<ResultadoLanzamiento & { error?: string }> {
-  const e164 = aE164(args.telefono, 'CO');
-  if (!e164) {
-    return {
-      runId: null,
-      pruebas: 0,
-      numeros: [],
-      motivo: null,
-      error: 'El número no se pudo interpretar. Escribilo con indicativo: +57 300 123 4567.',
-    };
-  }
-
-  const canal = await canalActivo(args.canalId);
-  if (!canal) {
-    return {
-      runId: null,
-      pruebas: 0,
-      numeros: [],
-      motivo: null,
-      error: 'No hay ningún canal activo. Configurá uno en la pestaña «Nuestra línea».',
-    };
-  }
-
-  const { data: existente } = await db()
-    .from('smoke_targets')
-    .select('*')
-    .eq('phone_e164', e164)
-    .maybeSingle();
-
-  if ((existente as TargetRow | null)?.bloqueado) {
-    return {
-      runId: null,
-      pruebas: 0,
-      numeros: [],
-      motivo: null,
-      error: `Ese número pidió que no le escribiéramos (${(existente as TargetRow).bloqueado_motivo ?? 'sin motivo'}). No se puede probar.`,
-    };
-  }
-
-  const { data: target, error } = await db()
-    .from('smoke_targets')
-    .upsert(
-      {
-        // Si el admin no pasa organización, se conserva la que el número ya
-        // tenía. Pisarla con null desasociaría un número del prospecto al que
-        // pertenece solo porque alguien lo probó a mano.
-        organization_id:
-          args.organizationId ?? (existente as TargetRow | null)?.organization_id ?? null,
-        nombre: args.nombre ?? (existente as TargetRow | null)?.nombre ?? null,
-        phone_e164: e164,
-        origen: 'manual' as const,
-        source_url: (existente as TargetRow | null)?.source_url ?? null,
-        confianza: 1,
-      },
-      { onConflict: 'phone_e164' },
-    )
-    .select('*')
-    .single();
-
-  if (error || !target) {
-    return {
-      runId: null,
-      pruebas: 0,
-      numeros: [],
-      motivo: null,
-      error: error?.message ?? 'no se pudo registrar el número',
-    };
-  }
-
-  return await crearRun({
-    organizationId: args.organizationId,
-    sessionId: null,
-    origen: 'manual',
-    canalId: canal.id,
-    contextoManual: args.contextoManual,
-    objetivos: [{ target: target as TargetRow, plantillas: args.plantillas }],
-  });
-}
+// ════════════════════════════════════════════════════════════════════════════
+// EL CAMINO MANUAL VIVE EN OTRO LADO
+// ════════════════════════════════════════════════════════════════════════════
+//
+// `lanzarDesdeAdmin()` estaba acá y se fue a `lote.ts` en ADR 0027. No fue una
+// mudanza estética: hacía casi lo mismo que `crearLote()` con otras palabras, y
+// tener dos formas de crear una prueba a mano era la mitad de la confusión que
+// esa decisión vino a arreglar. Hoy TODO lo manual pasa por `crearLote()`, que
+// modela la prueba como `números × líneas × guiones`; una conversación suelta es
+// el caso 1×1×1 de eso mismo.
+//
+// Lo que queda acá es el camino AUTOMÁTICO, que es el que tiene los cuatro
+// frenos completos porque es el único donde no hay nadie mirando.
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CREAR
@@ -394,7 +312,7 @@ async function crearRun(args: {
   }
 
   for (const [targetId, telefono] of porNumero) {
-    await cancelarVivasContra(telefono, run.id);
+    await cancelarVivasContra(telefono, args.canalId, run.id);
     const { data: primera } = await db()
       .from('smoke_probes')
       .select('id')

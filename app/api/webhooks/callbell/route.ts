@@ -111,7 +111,7 @@ export async function POST(request: Request) {
         if (prueba.finished_at) {
           await evaluarCerradasSinEvaluar(prueba.run_id);
           // Cerrar una prueba libera un cupo del lote. Empujar la cola acá es
-          // lo que hace que una tanda de treinta clientes avance sola sin
+          // lo que hace que una prueba de treinta clientes avance sola sin
           // depender de que alguien tenga la pantalla abierta.
           if (prueba.batch_id) await avanzarLote(prueba.batch_id);
         }

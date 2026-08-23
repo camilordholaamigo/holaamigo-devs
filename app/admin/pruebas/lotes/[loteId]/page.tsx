@@ -9,19 +9,19 @@ import { informesRecientes } from '@/lib/pruebas/informe';
 import { env } from '@/lib/env';
 
 /**
- * La pantalla de una tanda.
+ * La pantalla de una prueba: sus conversaciones, en vivo.
  *
- * Tres bloques, en el orden en que se usan: el estado en vivo, el botón que
- * convierte la tanda en informes, y el registro de lo que fue pasando.
+ * Tres bloques, en el orden en que se usan: las conversaciones creciendo, el
+ * botón que las convierte en informes, y el registro de lo que fue pasando.
  *
- * El registro va último y completo. Un lote de treinta clientes que corre seis
- * horas se mira tres veces, y las dos últimas la pregunta no es «cómo va» sino
- * «qué pasó mientras no estaba».
+ * El registro va último y completo. Un barrido de treinta clientes que corre
+ * seis horas se mira tres veces, y las dos últimas la pregunta no es «cómo va»
+ * sino «qué pasó mientras no estaba».
  */
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const metadata = { title: 'Tanda de pruebas · admin', robots: { index: false } };
+export const metadata = { title: 'Prueba de línea · admin', robots: { index: false } };
 
 export default async function LotePage({ params }: PageProps<'/admin/pruebas/lotes/[loteId]'>) {
   const { loteId } = await params;
@@ -35,14 +35,27 @@ export default async function LotePage({ params }: PageProps<'/admin/pruebas/lot
       .from('smoke_probes')
       .select(
         `id, template_id, target_phone, estado, cerro_con, turno, max_turnos,
-         segundos_primera_respuesta, auditoria_score, evaluacion_score, error,
-         smoke_targets ( nombre )`,
+         segundos_primera_respuesta, auditoria_score, evaluacion_score, error, conversation,
+         smoke_targets ( nombre ),
+         smoke_channels ( label, phone_e164 )`,
       )
       .eq('batch_id', loteId)
       .order('created_at', { ascending: true })
       .limit(200),
     informesRecientes(60),
   ]);
+
+  const filas = (pruebas ?? []) as unknown as Array<{
+    target_phone: string;
+    smoke_channels: { phone_e164: string } | null;
+  }>;
+  // Los números y las líneas de la prueba no están en `smoke_batches`: se
+  // derivan de las conversaciones, que son las que llevan el par. Guardarlos
+  // duplicados en el lote dejaría dos verdades y una se desincronizaría.
+  const numeros = new Set(filas.map((f) => f.target_phone)).size;
+  const lineas = [
+    ...new Set(filas.map((f) => f.smoke_channels?.phone_e164).filter(Boolean)),
+  ] as string[];
 
   const delLote = informes.filter((i) => i.batch_id === loteId);
 
@@ -56,10 +69,16 @@ export default async function LotePage({ params }: PageProps<'/admin/pruebas/lot
           <div className="space-y-1.5">
             <h1 className="text-2xl font-semibold tracking-tight text-ink">{lote.nombre}</h1>
             <p className="tnum text-[13px] text-ink-faint">
-              {estado.organizaciones} organizacion{estado.organizaciones === 1 ? '' : 'es'} ·{' '}
-              {estado.total} conversaciones · máximo {lote.max_concurrentes} a la vez ·{' '}
-              {lote.ritmo_segundos} s entre arranques
+              {estado.total} {estado.total === 1 ? 'conversación' : 'conversaciones'} ·{' '}
+              {numeros} {numeros === 1 ? 'número' : 'números'} ·{' '}
+              {lineas.length} {lineas.length === 1 ? 'línea nuestra' : 'líneas nuestras'} · máximo{' '}
+              {lote.max_concurrentes} a la vez · {lote.ritmo_segundos} s entre arranques
             </p>
+            {lineas.length > 0 ? (
+              <p className="tnum text-[12.5px] text-ink-faint">
+                Desde {lineas.join(' · ')}
+              </p>
+            ) : null}
           </div>
           <div className="flex flex-wrap gap-2">
             <Badge tone={lote.proposito === 'qa' ? 'money' : 'neutral'}>
@@ -81,7 +100,7 @@ export default async function LotePage({ params }: PageProps<'/admin/pruebas/lot
 
       {/* ── Los informes ────────────────────────────────────────────────
           Va acá y no en una pantalla aparte porque es la acción siguiente
-          natural: la tanda terminó, ahora se convierte en algo que se manda. */}
+          natural: la prueba terminó, ahora se convierte en algo que se manda. */}
       <section className="space-y-4">
         <div>
           <h2 className="text-[17px] font-semibold tracking-tight text-ink">Los informes</h2>
@@ -95,7 +114,7 @@ export default async function LotePage({ params }: PageProps<'/admin/pruebas/lot
 
         {delLote.length === 0 ? (
           <Empty
-            title="Todavía no hay informes de esta tanda."
+            title="Todavía no hay informes de esta prueba."
             hint="Se pueden generar cuando al menos una conversación haya cerrado."
           />
         ) : (

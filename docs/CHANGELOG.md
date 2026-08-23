@@ -8,6 +8,182 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.10.0] — 2026-08-23 · La prueba a medida, y varias líneas
+
+El smoke tester dejó de ser una parte del diagnóstico y pasó a ser **una
+herramienta**. Antes solo sabía apuntarle a un negocio que ya estuviera en nuestra
+base con research corrido: las preguntas las escribía el compilador leyendo
+`research_findings`. El caso que faltaba es el que más se pide:
+
+> «Probá la Clínica Mirla, +57…, es una clínica estética en Bogotá. Que la IA haga
+> tres preguntas sobre sus tratamientos y converse. O que mande estas tres
+> exactas: si abren el lunes, cuánto cuesta el tratamiento X, y qué pasa si no me
+> funciona.»
+
+Sin crear organización, sin correr research, sin desplegar. Y **desde varias de
+nuestras líneas a la vez**, que es la única forma de ver si el agente de un negocio
+les contesta igual a tres clientes simultáneos.
+
+Ver [ADR 0027](adr/0027-la-prueba-a-medida-y-las-lineas.md),
+[wiki/23](wiki/23-smoke-tester.md), [wiki/24](wiki/24-lotes-e-informes.md) y el
+contrato en [`docs/api/pruebas.md`](api/pruebas.md).
+
+### Agregado
+
+- **`/admin/pruebas/nueva`** — la única pantalla que crea pruebas a mano. Tres
+  pasos (a quién · qué le decimos · desde qué líneas) y **una vista previa al
+  lado con los mismos globos de WhatsApp que va a ver el que contesta.** El
+  problema que arregla no era de campos que faltaban: era que nadie sabía qué
+  hacía el botón, y un preview exacto contesta eso mejor que cualquier
+  explicación. Por eso `lib/pruebas/guion.ts` es **puro** — las sugerencias que se
+  ven en pantalla salen de la MISMA función que arma el plan en el servidor.
+
+- **Dos modos, y el modo vive en el plan.** `conversar` es el comprador sintético
+  de siempre. `guion` manda los mensajes exactos que escribió el operador, uno
+  tras otro, **sin importar qué contesten** y sin gastar un peso en modelo. Sirve
+  para hacerle la misma pregunta a veinte negocios y comparar las veinte
+  respuestas palabra por palabra.
+
+- **`lib/pruebas/guion.ts`** — de un formulario a un `PlanDePrueba`. El plan sigue
+  siendo el contrato; quién lo escribió es un detalle, y río abajo el motor, el
+  auditor, el evaluador y el informe no se enteraron.
+
+- **Varias líneas de Callbell.** `canalesActivos()`, y la pantalla «Nuestras
+  líneas» pasó de editar una a administrar todas. Cada línea abre su propio hilo
+  de WhatsApp: tres líneas contra un número son tres conversaciones que el negocio
+  ve como tres clientes distintos. Contesta la puerta que ADR 0026 dejó abierta en
+  su alternativa B.
+
+- **`POST /api/admin/pruebas/redactar`** — el **borrador** de un guion a partir de
+  dos líneas escritas a las apuradas. Rellena el formulario; lo que se manda es lo
+  que quedó escrito en los campos. Nunca falla hacia afuera: sin llave devuelve
+  las sugerencias determinísticas con `degradado: true`.
+
+- **`GET /api/admin/pruebas?telefono=…`** — si el número está bloqueado, cuándo fue
+  la última prueba, si ya lo conocemos. Es lo que reemplaza al enfriamiento en el
+  camino manual, y la razón está abajo.
+
+- **La transcripción crece sola** en `/admin/pruebas/[pruebaId]`. La conversación
+  tarda entre dos y veinticinco minutos y antes había que recargar a mano, así que
+  nadie volvía. Y no es solo comodidad: ese GET **es la red de seguridad real del
+  motor** — cierra estancadas y despierta colas, con la frecuencia del problema.
+
+- **La pantalla de una prueba tiene dos vistas.** *Comparar* pone hasta seis
+  transcripciones lado a lado —«¿les contestó igual a los tres?»— y *Lista* da una
+  fila por conversación con el último mensaje del negocio a la vista. Arranca en la
+  que corresponde al tamaño. Si hay que abrir tres pestañas para comparar, nadie
+  compara.
+
+- **Dos moldes semilla**, `a-medida` y `guion`. `smoke_probes.template_id` es clave
+  foránea, y así `resumen_de_pruebas()` sigue agrupando por tipo de prueba en vez
+  de mezclar todo en un balde.
+
+### Cambiado
+
+- **La unidad de ocupación es el par `(nuestra línea, su número)`, no el número.**
+  Es el cambio con más consecuencias:
+  - `avanzarCola(runId, targetId, canalId)` — sin el canal, la conversación de la
+    línea B veía «ya hay una corriendo» (la de la línea A) y **nunca arrancaba**;
+  - `cancelarVivasContra(telefono, canalId, exceptoRunId?)` — sin el canal,
+    arrancar la línea B **cancelaba** la de la línea A contra el mismo negocio;
+  - `siguientePendiente` del lote y el espaciado de 90 s, también por par.
+
+- **La correlación del webhook desambigua entre líneas**, en tres escalones: el
+  `channel_uuid` del payload, nuestro propio número (que para un entrante Callbell
+  manda en `from`), y **a ciegas** con el log `desambiguación a ciegas entre
+  líneas`. El tercero es el comportamiento que había antes, y con una sola línea es
+  exactamente correcto — por eso esto no rompió nada.
+
+- **Una prueba es `números × líneas × guiones`.** `crearLote` acepta `canales[]` y
+  `aMedida`, y devuelve `conversaciones[]`. Con una sola, la pantalla siguiente es
+  la transcripción y no el grupo: una herramienta que no deja ver lo que acaba de
+  hacer no se vuelve a usar.
+
+- **El orden de inserción agrupa por objetivo y no por línea.** `avanzarLote`
+  arranca en orden de creación, así que un tope de 3 abre las tres líneas contra el
+  primer negocio antes de pasar al segundo — y en un barrido de treinta, el primer
+  negocio queda completo y legible en minutos en vez de al final.
+
+- **El vocabulario, fijo.** En pantalla: **la prueba** (un guion contra N números
+  desde M líneas) y **la conversación** (una transcripción con su veredicto). La
+  palabra «tanda» no se usa más en ningún lado: describía el diseño de ADR 0026 y
+  no el uso, y era la mitad de por qué nadie entendía la pantalla.
+
+- `PlanDePrueba` gana `modo`, `guion`, `contexto` e `instrucciones`, **opcionales
+  porque las filas anteriores no los tienen** y por ninguna otra razón. Se leen con
+  `modoDelPlan(plan)`, nunca directo.
+
+### Eliminado
+
+- **`POST /api/admin/pruebas/lotes`** y **`lanzarDesdeAdmin()`**. Hacían casi lo
+  mismo que `crearLote()` con otras palabras, y tener dos formas de crear una
+  prueba a mano era la mitad de la confusión que ADR 0027 vino a arreglar. Hay una
+  prueba que verifica que el endpoint no vuelva.
+
+- El formulario «Probar una línea» de `/admin/pruebas`. Se fue a su propia pantalla
+  con la vista previa; al lado de la configuración las dos cosas parecían del mismo
+  peso, y no lo son.
+
+### Sobre los frenos, dicho en voz alta
+
+**Los tres primeros frenos de ADR 0025 rigen el camino automático y no el manual,
+y eso es diseño y no descuido.** No hay organización contra la que autorizar
+cuando un operador escribe un número suelto, y el enfriamiento de 72 h existe para
+que cinco recargas de la landing no manden cinco mensajes — no para impedir
+retestear al cliente al que se le acaba de cambiar el prompt. Lo que se paga a
+cambio:
+
+- el **bloqueo es terminal en los dos caminos** y no lo levanta nada automático;
+- la cuenta va **escrita en el botón**: «Escribir ahora · 3 conversaciones»;
+- la pantalla muestra **cuándo fue la última prueba** contra ese número;
+- cada conversación queda como fila con su hora, su línea y su operador.
+
+La tabla completa está en [ADR 0027](adr/0027-la-prueba-a-medida-y-las-lineas.md)
+y en [`docs/api/pruebas.md`](api/pruebas.md).
+
+### Lo que queda pendiente, a propósito
+
+- **Una sola persona sintética por prueba.** Tres líneas hoy son la misma identidad
+  tres veces. Que cada línea lleve la suya convertiría esto de una prueba de
+  coherencia en una de carga.
+- **El guion no reacciona.** Si el negocio pregunta algo, sigue de largo. Es el
+  precio de que sea determinístico.
+- **La correlación a ciegas.** Si el proveedor deja de mandar `channel_uuid` *y*
+  nuestro número, dos conversaciones simultáneas contra el mismo negocio pueden
+  cruzar un mensaje. Queda en el log con esas palabras.
+
+### Para desplegarlo
+
+1. **Correr la migración** `supabase/migrations/0017_prueba_a_medida.sql` en el
+   editor SQL de Supabase. Es idempotente y **no toca ninguna fila existente**:
+   crea dos índices parciales, siembra dos moldes con `on conflict do nothing`, y
+   actualiza comentarios de tabla. Va **después** de
+   `0016_la_prueba_no_la_gobierna_el_plan.sql`; si se corre antes, falla temprano
+   diciendo cuál falta.
+
+2. **Desplegar.** No hay variables de entorno nuevas.
+
+3. **Verificar, en este orden:**
+   - `/admin/pruebas` → «Nuestras líneas»: la línea de siempre sigue ahí y activa.
+   - **Probar el envío** desde esa línea a tu propio celular. No seguir hasta
+     verlo llegar.
+   - `/admin/pruebas/nueva` contra tu celular, modo **conversar**, y contestá vos.
+     La transcripción tiene que crecer sola.
+   - Otra vez con un **guion de tres preguntas**. Tienen que salir las tres, una
+     por respuesta tuya, y cerrar sola al terminar la tercera.
+
+4. **Si vas a usar varias líneas** —y es lo que más valor agrega—: agregá la
+   segunda en «Nuestras líneas» con su `channel_uuid`, apuntá su webhook al mismo
+   `/api/webhooks/callbell?k=…`, y creá una prueba contra tu celular eligiendo las
+   dos. **Tienen que llegar dos conversaciones separadas y las dos tienen que
+   avanzar.** Si solo avanza una, la correlación no está desambiguando: buscá
+   `desambiguación a ciegas entre líneas` en el log de Vercel.
+
+5. Nada que revertir en el código si algo sale mal: con una sola línea configurada
+   el comportamiento es idéntico al de 3.9.0.
+
+---
+
 ## [3.9.0] — 2026-08-23 · El lote y el informe
 
 La 3.8.0 dejó el motor: le escribimos a **una** línea. Eso resuelve un

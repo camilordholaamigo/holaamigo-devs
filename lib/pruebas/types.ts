@@ -57,9 +57,14 @@ export interface Sonda {
   /**
    * De dónde salió. `plantilla` = venía en el molde; `research` = la agregó el
    * compilador porque lo encontró en el sitio (el evento que están vendiendo,
-   * el precio publicado, la promesa de respuesta en 24 h).
+   * el precio publicado, la promesa de respuesta en 24 h); `admin` = la
+   * escribió una persona en /admin/pruebas/nueva.
+   *
+   * `admin` no es un caso degradado de `research`: es la sonda con más contexto
+   * de las tres, porque el que la escribió sabe qué está buscando. Lo que NO
+   * trae es fuente verificable, y eso se ve en `cobertura`.
    */
-  origen: 'plantilla' | 'research';
+  origen: 'plantilla' | 'research' | 'admin';
 }
 
 /**
@@ -97,6 +102,32 @@ export type ChequeoDeterministico =
   | { tipo: 'pregunto_al_menos'; cantidad: number };
 
 /**
+ * Quién escribe cada turno del comprador.
+ *
+ * `conversar`  el comprador sintético redacta contra el objetivo, turno a
+ *              turno. Una llamada barata al modelo por turno. Es el que mide
+ *              cómo venden.
+ * `guion`      los mensajes ya están escritos en `plan.guion` y se mandan en
+ *              orden, sin importar qué contesten. Cero llamadas a modelo. Es
+ *              el que permite hacerle la MISMA pregunta a veinte negocios y
+ *              comparar las veinte respuestas.
+ *
+ * Ver docs/adr/0027-la-prueba-a-medida-y-las-lineas.md
+ */
+export type ModoDePrueba = 'conversar' | 'guion';
+
+/**
+ * El modo de un plan, tolerando los planes escritos antes de ADR 0027.
+ *
+ * Se lee con esta función y nunca con `plan.modo` directo: las filas anteriores
+ * a 0016 no tienen el campo, y un `undefined` colándose a un `switch` haría que
+ * una conversación vieja deje de avanzar sin decir por qué.
+ */
+export function modoDelPlan(plan: Pick<PlanDePrueba, 'modo'>): ModoDePrueba {
+  return plan.modo === 'guion' ? 'guion' : 'conversar';
+}
+
+/**
  * El test, ya compilado contra un negocio concreto.
  *
  * Es al smoke tester lo que el playbook es al agente de agendamiento: **datos,
@@ -106,6 +137,30 @@ export type ChequeoDeterministico =
  */
 export interface PlanDePrueba {
   template_id: string;
+  /**
+   * Opcional porque las filas escritas antes de ADR 0027 no lo tienen. No se
+   * lee directo: se lee con `modoDelPlan()`.
+   */
+  modo?: ModoDePrueba;
+  /**
+   * Solo en modo `guion`: los mensajes, en orden. El primero ES `apertura`.
+   *
+   * Se guarda duplicado con `apertura` a propósito: `apertura` es el contrato
+   * que el motor usa para arrancar cualquier prueba, y el guion es la lista
+   * completa que se le muestra al operador. Derivar uno del otro obligaría a
+   * todos los consumidores del plan a saber en qué modo está.
+   */
+  guion?: string[];
+  /**
+   * Lo que el equipo sabe del negocio, escrito a mano.
+   *
+   * Va al prompt del comprador para que sepa de qué está hablando, y NO a la
+   * ficha: la ficha es lo que se puede citar con URL. Sin fuente no se puede
+   * acusar a nadie de haber inventado un dato (§13.4).
+   */
+  contexto?: string | null;
+  /** Cómo tiene que comportarse el comprador. Ajusta el tono, nunca los hechos. */
+  instrucciones?: string | null;
   /** El nombre del negocio como lo vamos a nombrar en la conversación. */
   negocio: string;
   /** Lo que vende, en las palabras del sitio. Va en el mensaje de apertura. */

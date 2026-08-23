@@ -6,21 +6,30 @@ import type { Entrante } from '@/lib/pruebas/callbell';
 /**
  * Correlación: a qué conversación pertenece este mensaje.
  *
- * **Se empareja POR NÚMERO.** Es la decisión que más consecuencias tiene en
- * todo el smoke tester, y está tomada así desde el diseño y no como una mejora
- * posterior.
+ * **Se empareja POR EL PAR (nuestra línea, su número).** Es la decisión que más
+ * consecuencias tiene en todo el smoke tester.
  *
  * El paquete del que viene esto emparejaba contra «la conversación activa más
- * reciente», sin mirar el teléfono. Funciona, con dos precios que se pagan
- * todos los días: no se puede correr más de una conversación a la vez, y
- * cualquier conversación colgada se traga los mensajes de las siguientes. Con
- * emparejamiento por número podemos escribirle a tres líneas al mismo tiempo,
- * que es justo lo que hace falta cuando el cliente está esperando el resultado
- * en pantalla.
+ * reciente», sin mirar el teléfono. Funciona, con dos precios que se pagan todos
+ * los días: no se puede correr más de una conversación a la vez, y cualquier
+ * conversación colgada se traga los mensajes de las siguientes. Emparejar por
+ * número arregló las dos y permitió escribirle a tres negocios al mismo tiempo.
  *
- * La comparación es por los últimos dígitos y no por igualdad exacta: el mismo
- * número llega como `+573001234567`, `573001234567` y `3001234567` según quién
- * reenvíe el evento, y las tres son el mismo teléfono.
+ * Lo que agregó ADR 0027 es el otro eje: **tres de NUESTRAS líneas escribiéndole
+ * al MISMO negocio.** Ahí el número ya no alcanza, porque las tres conversaciones
+ * comparten `target_phone` y son tres hilos de WhatsApp distintos. Se desambigua
+ * con lo que el payload traiga, en este orden:
+ *
+ *   1. el `channel_uuid` del proveedor;
+ *   2. nuestro propio número —para un entrante también viene en el payload—;
+ *   3. a ciegas, la más reciente que espera respuesta, y queda en el log.
+ *
+ * El paso 3 no es una rendición: es el comportamiento que había antes de que
+ * existieran varias líneas, y con una sola línea es exactamente correcto.
+ *
+ * La comparación de números es por los últimos dígitos y no por igualdad exacta:
+ * el mismo número llega como `+573001234567`, `573001234567` y `3001234567`
+ * según quién reenvíe el evento, y las tres son el mismo teléfono.
  */
 
 const MIN_DIGITOS = 8;
@@ -39,6 +48,8 @@ interface PruebaViva {
   ultimo_entrante_at: string | null;
   updated_at: string;
   template_id: string;
+  channel_id: string;
+  smoke_channels: { channel_uuid: string; phone_e164: string } | null;
 }
 
 export async function correlacionar(entrante: Entrante): Promise<ResultadoCorrelacion> {
@@ -48,16 +59,32 @@ export async function correlacionar(entrante: Entrante): Promise<ResultadoCorrel
 
   const { data } = await db()
     .from('smoke_probes')
-    .select('id, target_phone, estado, awaiting_reply, ultimo_entrante_at, updated_at, template_id')
+    .select(
+      `id, target_phone, estado, awaiting_reply, ultimo_entrante_at, updated_at, template_id,
+       channel_id, smoke_channels ( channel_uuid, phone_e164 )`,
+    )
     .eq('estado', 'running')
     .order('updated_at', { ascending: false })
     .limit(50);
 
-  const vivas = (data ?? []) as PruebaViva[];
+  const vivas = (data ?? []) as unknown as PruebaViva[];
 
-  const coinciden = vivas.filter((p) =>
+  const porNumero = vivas.filter((p) =>
     entrante.candidatos.some((c) => mismoNumero(c, p.target_phone)),
   );
+
+  const { coinciden, aCiegas } = porLinea(porNumero, entrante);
+
+  if (aCiegas) {
+    // Este log es el que resuelve el incidente el día que dos conversaciones
+    // simultáneas contra el mismo negocio cruzan un mensaje. Se escribe con
+    // estas palabras a propósito, para que se pueda buscar.
+    console.warn('[pruebas] desambiguación a ciegas entre líneas', {
+      candidatas: coinciden.length,
+      telefono: coinciden[0]?.target_phone,
+      canal_en_payload: entrante.canalUuid,
+    });
+  }
 
   // Camino 1 · la conversación está esperando respuesta de este número.
   const esperando = coinciden.filter((p) => p.awaiting_reply);
@@ -94,15 +121,57 @@ export async function correlacionar(entrante: Entrante): Promise<ResultadoCorrel
     tipo: 'sin_match',
     detalle: {
       candidatos: entrante.candidatos,
+      canal: entrante.canalUuid,
       preview: entrante.texto.slice(0, 80),
       vivas: vivas.slice(0, 5).map((p) => ({
         id: p.id,
         telefono: p.target_phone,
         esperando: p.awaiting_reply,
         plantilla: p.template_id,
+        linea: p.smoke_channels?.phone_e164 ?? p.channel_id,
       })),
     },
   };
+}
+
+/**
+ * Reduce las candidatas a las de la línea por la que entró el mensaje.
+ *
+ * Con cero o una candidata no hace nada: es el caso normal y no vale la pena
+ * gastarle una comparación. Con dos o más —el caso de varias de nuestras líneas
+ * contra el mismo negocio— reduce, y si no puede reducir avisa.
+ *
+ * **Nunca devuelve una lista vacía.** Si el payload trae un `channel_uuid` que no
+ * coincide con ninguna candidata, lo más probable no es que el mensaje no sea de
+ * ninguna: es que el proveedor cambió el nombre del campo, o que reenvía el uuid
+ * de otra cosa. Descartar ahí perdería el mensaje en silencio, que es el peor
+ * modo de fallo de todo el subsistema — sin el entrante la conversación se cuelga
+ * y el negocio queda reportado como «no contestó».
+ */
+function porLinea(
+  candidatas: PruebaViva[],
+  entrante: Entrante,
+): { coinciden: PruebaViva[]; aCiegas: boolean } {
+  if (candidatas.length <= 1) return { coinciden: candidatas, aCiegas: false };
+
+  if (entrante.canalUuid) {
+    const porCanal = candidatas.filter(
+      (p) => p.smoke_channels?.channel_uuid === entrante.canalUuid,
+    );
+    if (porCanal.length > 0) return { coinciden: porCanal, aCiegas: false };
+  }
+
+  // Nuestro propio número. Para un mensaje recibido, Callbell lo manda en `from`
+  // —al revés de lo que dice la intuición— y el parser lo junta con los demás.
+  const porNuestroNumero = candidatas.filter((p) => {
+    const nuestro = p.smoke_channels?.phone_e164;
+    return nuestro ? entrante.candidatos.some((c) => mismoNumero(c, nuestro)) : false;
+  });
+  if (porNuestroNumero.length > 0 && porNuestroNumero.length < candidatas.length) {
+    return { coinciden: porNuestroNumero, aCiegas: false };
+  }
+
+  return { coinciden: candidatas, aCiegas: true };
 }
 
 /**

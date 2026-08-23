@@ -62,12 +62,18 @@ export async function GET(
   if (recogidas > 0) {
     const { data: pendientes } = await db()
       .from('smoke_probes')
-      .select('target_id')
+      .select('target_id, channel_id')
       .eq('run_id', runId)
       .eq('estado', 'pending');
 
-    for (const targetId of new Set((pendientes ?? []).map((p) => p.target_id))) {
-      await avanzarCola(runId, targetId).catch(() => {});
+    // Por par (línea, número): con dos de nuestras líneas contra el mismo
+    // negocio, despertar solo por número dejaba la segunda dormida.
+    const colas = new Map((pendientes ?? []).map((p) => [
+      `${p.target_id}:${p.channel_id}`,
+      p,
+    ]));
+    for (const p of colas.values()) {
+      await avanzarCola(runId, p.target_id, p.channel_id).catch(() => {});
     }
   }
 
