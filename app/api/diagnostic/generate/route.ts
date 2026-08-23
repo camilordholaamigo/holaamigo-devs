@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { generateDiagnostic } from '@/lib/diagnostic/generate';
-import { db } from '@/lib/supabase/admin';
+import { db, explainDbError } from '@/lib/supabase/admin';
 
 /**
  * POST /api/diagnostic/generate — el President ensambla y devuelve el enlace.
@@ -71,7 +71,7 @@ export async function POST(request: Request) {
       degraded: result.degraded,
     });
   } catch (err) {
-    console.error('[diagnostic/generate] fallo', err);
+    console.error('[diagnostic/generate] fallo:', explainDbError(err), '· diagnóstico completo en GET /api/health');
     return NextResponse.json(
       { error: 'No pudimos armar el diagnóstico. Ya nos llegó la alerta.' },
       { status: 500 },

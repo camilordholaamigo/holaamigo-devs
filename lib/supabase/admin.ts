@@ -55,6 +55,17 @@ export function explainDbError(err: unknown): string {
   const message =
     err instanceof Error ? err.message : typeof err === 'string' ? err : String(err);
 
+  // La variable existe en Vercel y la request igual falla. Pasó el
+  // 2026-08-23: `SUPABASE_SERVICE_ROLE_KEY` se agregó al proyecto y el
+  // despliegue que estaba sirviendo se había construido diez minutos antes,
+  // así que /api/intake devolvía 500 con el mensaje amable. Vercel congela las
+  // env vars en el build: agregarlas no las inyecta en lo que ya está corriendo.
+  // Sin esta línea, el log dice "falta la variable" mientras el dashboard la
+  // muestra ahí, y uno se va a buscar el error a donde no está.
+  if (/Falta la variable de entorno/i.test(message)) {
+    return `${message} → Si ya está en Vercel, el despliegue que corre se construyó ANTES de agregarla: las env vars se congelan en el build. Redesplegar (un commit vacío basta) y confirmar con GET /api/health que \`env:supabase\` quedó en true.`;
+  }
+
   if (/invalid schema|PGRST106/i.test(message)) {
     return `${message} → El schema \`holaamigo\` no está expuesto en la API de Supabase. Project Settings → API → Exposed schemas, agregar \`holaamigo\`. Ver supabase/migrations/0004_exponer_api.sql`;
   }

@@ -8,6 +8,60 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.10.1] — 2026-08-23 · La env var que el dashboard mostraba y el build no tenía
+
+Arreglo de diagnóstico, no de producto. El síntoma fue el peor posible: la
+landing pedía nombre, correo y sitio, y contestaba **«Algo se rompió de nuestro
+lado. Intenta de nuevo en un minuto.»** Reintentar no servía, porque no era
+transitorio.
+
+El log lo decía en una línea:
+
+```
+[intake] fallo: Falta la variable de entorno SUPABASE_SERVICE_ROLE_KEY.
+```
+
+Y la variable **estaba** en Vercel. La causa: **Vercel congela las env vars en el
+build**. El despliegue que estaba sirviendo se construyó minutos antes de que
+`SUPABASE_SERVICE_ROLE_KEY` se agregara al proyecto, así que corría sin ella.
+Agregar una variable no la inyecta en lo que ya está corriendo — hay que
+redesplegar. Desde afuera eso es indistinguible de una llave mal pegada, y
+`explainDbError()` —que existe justo para traducir esta clase de error— no tenía
+esa rama.
+
+### Arreglado
+
+- **`explainDbError()` traduce «Falta la variable de entorno».** Ahora el log
+  dice qué hacer: *si ya está en Vercel, el despliegue se construyó ANTES de
+  agregarla; redesplegar y confirmar con `GET /api/health`*. Es la misma decisión
+  que la rama de `Invalid schema`: el error crudo apunta al lugar equivocado, y
+  quien lo lee se va a buscar una llave mala en vez de un build viejo.
+
+- **Los cuatro puntos del camino del visitante pasan por `explainDbError()`.**
+  `/api/intake`, `/api/quiz/next`, `/api/quiz/answer` y `/api/diagnostic/generate`
+  logueaban el error crudo —los tres últimos ni siquiera lo traducían— y ninguno
+  nombraba `/api/health`. Ahora los cuatro cierran con `· diagnóstico completo en
+  GET /api/health`, que es el endpoint que ya contestaba la pregunta y al que
+  nadie sabía que había que ir.
+
+El mensaje que ve el visitante **no cambió**, a propósito: los `detail` de
+`/api/health` nombran infraestructura y viven detrás del admin (ADR 0003).
+
+### Despliegue
+
+1. `git push` — la integración de Git despliega a producción.
+2. Confirmar con `GET /api/health`: `env:supabase`, `db:schema` y `db:seed_quiz`
+   en `true`.
+3. **Sin migración.** El cambio es de código.
+
+Pendiente de operación, no de este cambio: `db:v11` sigue en `false` porque
+**`0016_la_prueba_no_la_gobierna_el_plan.sql` y `0017_prueba_a_medida.sql` no se
+han corrido** en el proyecto Supabase (faltan los moldes `a-medida` y `guion`, y
+`smoketest.probe` sigue con clase `external_comms`). El flujo de la landing al
+diagnóstico no los usa; el smoke tester sí.
+
+---
+
 ## [3.10.0] — 2026-08-23 · La prueba a medida, y varias líneas
 
 El smoke tester dejó de ser una parte del diagnóstico y pasó a ser **una

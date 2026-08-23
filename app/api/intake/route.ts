@@ -185,7 +185,7 @@ export async function POST(request: Request) {
     // `explainDbError` convierte los errores de configuración de Supabase en
     // instrucciones. El usuario sigue viendo el mensaje amable; quien lee los
     // logs ve qué hay que arreglar. Ver /api/health para el diagnóstico completo.
-    console.error('[intake] fallo:', explainDbError(err));
+    console.error('[intake] fallo:', explainDbError(err), '· diagnóstico completo en GET /api/health');
     return NextResponse.json(
       { error: 'Algo se rompió de nuestro lado. Intenta de nuevo en un minuto.' },
       { status: 500 },

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { z } from 'zod';
 import { getQuizState } from '@/lib/quiz/service';
 import { buildQuizPreview } from '@/lib/quiz/preview';
-import { db } from '@/lib/supabase/admin';
+import { db, explainDbError } from '@/lib/supabase/admin';
 
 /**
  * POST /api/quiz/next — devuelve la siguiente pregunta.
@@ -53,7 +53,7 @@ export async function POST(request: Request) {
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (err) {
-    console.error('[quiz/next] fallo', err);
+    console.error('[quiz/next] fallo:', explainDbError(err), '· diagnóstico completo en GET /api/health');
     return NextResponse.json({ error: 'No pudimos cargar la pregunta.' }, { status: 500 });
   }
 }

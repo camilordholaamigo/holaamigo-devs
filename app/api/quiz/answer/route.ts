@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { saveAnswer, getQuizState, markQuizCompleted } from '@/lib/quiz/service';
 import { buildQuizPreview } from '@/lib/quiz/preview';
 import { track } from '@/lib/events';
+import { explainDbError } from '@/lib/supabase/admin';
 
 /** Las dos respuestas que desbloquean el adelanto de la primera fuga. */
 const PREVIEW_KEYS = new Set(['ticket_band', 'dormant_db']);
@@ -85,7 +86,7 @@ export async function POST(request: Request) {
       { headers: { 'cache-control': 'no-store' } },
     );
   } catch (err) {
-    console.error('[quiz/answer] fallo', err);
+    console.error('[quiz/answer] fallo:', explainDbError(err), '· diagnóstico completo en GET /api/health');
     return NextResponse.json(
       { error: 'No pudimos guardar tu respuesta. Ya nos llegó la alerta — vuelve a intentar.' },
       { status: 500 },
