@@ -163,6 +163,14 @@ y en [`docs/api/pruebas.md`](api/pruebas.md).
 
 2. **Desplegar.** No hay variables de entorno nuevas.
 
+   Después del despliegue, `GET /api/health` trae un chequeo nuevo, `db:v11`,
+   que dice si las cuatro migraciones del smoke tester corrieron, si los cinco
+   moldes están sembrados, si `smoketest.probe` sigue siendo `self_outreach` y
+   **cuántas líneas activas hay**. Existe porque estas migraciones se corren a
+   mano —las credenciales están marcadas Sensitive en Vercel— y sin el chequeo
+   «la 0017 no se corrió» y «Callbell rechazó la llave» se ven exactamente igual
+   desde afuera: una prueba que se crea y no hace nada.
+
 3. **Verificar, en este orden:**
    - `/admin/pruebas` → «Nuestras líneas»: la línea de siempre sigue ahí y activa.
    - **Probar el envío** desde esa línea a tu propio celular. No seguir hasta

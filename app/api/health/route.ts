@@ -412,6 +412,90 @@ export async function GET(request: Request) {
       fix: v10.length === 0 ? undefined : 'correr 0012_flujo_inicial.sql y 0013_agente_de_agendamiento.sql',
     });
 
+    // ── v11: el smoke tester (P8, P9, P10) ────────────────────────────────
+    //
+    // Este chequeo existe porque **las migraciones del smoke tester se corren a
+    // mano en el editor SQL de Supabase**: las credenciales están marcadas
+    // Sensitive en Vercel, así que no hay forma de aplicarlas desde el
+    // despliegue. Sin esto, «la 0017 no se corrió» y «Callbell rechazó la
+    // llave» se ven exactamente igual desde afuera: una prueba que se crea y no
+    // hace nada.
+    //
+    // Los dos moldes a medida son lo que más vale verificar. `template_id` es
+    // clave foránea, así que sin esas filas el formulario del admin revienta con
+    // un 23503 en el momento de mandar el mensaje — el peor lugar posible.
+    const v11: string[] = [];
+
+    for (const table of [
+      'smoke_channels',
+      'smoke_templates',
+      'smoke_targets',
+      'smoke_runs',
+      'smoke_probes',
+      'smoke_batches',
+      'smoke_reports',
+    ]) {
+      const { error } = await db().from(table).select('*', { head: true, count: 'exact' }).limit(1);
+      if (error) v11.push(table);
+    }
+
+    const { data: moldes } = await db()
+      .from('smoke_templates')
+      .select('id')
+      .in('id', ['servicio', 'faq', 'ventas', 'a-medida', 'guion']);
+
+    const sembrados = new Set((moldes ?? []).map((m) => m.id));
+    for (const id of ['servicio', 'faq', 'ventas', 'a-medida', 'guion']) {
+      if (!sembrados.has(id)) v11.push(`molde ${id} sin sembrar`);
+    }
+
+    const { error: resumenError } = await db().rpc('resumen_de_pruebas', {
+      p_desde: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+    });
+    if (resumenError) v11.push('rpc:resumen_de_pruebas (falta 0014)');
+
+    const { error: loteError } = await db().rpc('estado_del_lote', {
+      p_batch: '00000000-0000-0000-0000-000000000000',
+    });
+    if (loteError) v11.push('rpc:estado_del_lote (falta 0015)');
+
+    // La clase de riesgo, no solo que la capacidad exista. Con
+    // `external_comms` el disparo automático queda inalcanzable por
+    // construcción y no corre nunca — ver la migración 0016. Desde afuera eso
+    // se ve como «el prospecto no publicó su número».
+    const { data: capSmoke } = await db()
+      .from('capabilities')
+      .select('risk_class, platform_ceiling')
+      .eq('id', 'smoketest.probe')
+      .maybeSingle();
+
+    if (!capSmoke) v11.push('capacidad smoketest.probe sin sembrar');
+    else if (capSmoke.risk_class !== 'self_outreach') {
+      v11.push(`smoketest.probe sigue siendo ${capSmoke.risk_class}: el disparo automático no va a correr`);
+    }
+
+    // Sin línea activa no sale ningún mensaje, ni el automático ni el manual.
+    // Es una condición de operación y no de esquema, así que va como aviso
+    // dentro del mismo chequeo: quien lea esto está buscando por qué no salió.
+    const { count: lineas } = await db()
+      .from('smoke_channels')
+      .select('id', { count: 'exact', head: true })
+      .eq('activo', true);
+    if ((lineas ?? 0) === 0) v11.push('ninguna línea activa en /admin/pruebas');
+
+    checks.push({
+      name: 'db:v11',
+      ok: v11.length === 0,
+      detail:
+        v11.length === 0
+          ? `el smoke tester puede escribir, y los cinco moldes están (${lineas} ${lineas === 1 ? 'línea' : 'líneas'} activas)`
+          : `problemas: ${v11.join(', ')}`,
+      fix:
+        v11.length === 0
+          ? undefined
+          : 'correr 0014_smoke_tester.sql → 0015_lotes_e_informes.sql → 0016_la_prueba_no_la_gobierna_el_plan.sql → 0017_prueba_a_medida.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()
