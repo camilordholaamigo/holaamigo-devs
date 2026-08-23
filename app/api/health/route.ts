@@ -305,8 +305,18 @@ export async function GET(request: Request) {
     // ── v9: habilidades y CRM (P6) ────────────────────────────────────────
     //
     // Se comprueba que el catálogo esté sembrado y que la intersección de
-    // habilidades responda. Que devuelva una lista vacía para una organización
-    // inexistente es lo correcto: falla cerrado, igual que el motor de permisos.
+    // habilidades falle cerrado para una organización que no existe.
+    //
+    // OJO CON QUÉ SIGNIFICA «FALLA CERRADO» ACÁ. La primera versión de este
+    // chequeo exigía lista VACÍA, y estuvo reportando un fallo falso desde el
+    // día que se escribió: tanto 0011 como 0013 siembran habilidades globales
+    // (`organization_id = null`), así que toda organización —exista o no—
+    // recibe las de lectura. Peor todavía, el `fix` decía «correr
+    // 0011_integraciones.sql», que es exactamente la migración que las crea.
+    //
+    // Un chequeo que grita siempre entrena a la gente a ignorar el endpoint que
+    // usamos para diagnosticar. Lo que de verdad importa es que una
+    // organización desconocida no reciba NADA que toque el mundo exterior.
     const v9: string[] = [];
 
     for (const table of ['skills', 'skill_grants', 'skill_requests', 'staging_contacts', 'opportunities', 'lead_timeline']) {
@@ -323,17 +333,32 @@ export async function GET(request: Request) {
       p_org: '00000000-0000-0000-0000-000000000000',
       p_role: 'sales',
     });
-    if (skillError) v9.push('rpc:habilidades_activas');
-    else if ((lista as unknown[])?.length > 0) v9.push('el tool list no falla cerrado');
+    if (skillError) {
+      v9.push('rpc:habilidades_activas');
+    } else {
+      const peligrosas = ((lista as Array<{ risk_class?: string }> | null) ?? []).filter((s) =>
+        ['external_comms', 'self_outreach', 'spend', 'irreversible'].includes(s.risk_class ?? ''),
+      );
+      if (peligrosas.length > 0) {
+        v9.push(
+          `el tool list no falla cerrado: una organización inexistente recibe ${peligrosas
+            .map((s) => s.risk_class)
+            .join(', ')}`,
+        );
+      }
+    }
 
     checks.push({
       name: 'db:v9',
       ok: v9.length === 0,
       detail:
         v9.length === 0
-          ? `${skillCount} habilidades en catálogo y el tool list falla cerrado`
+          ? `${skillCount} habilidades en catálogo y nada que salga del edificio para una organización desconocida`
           : `problemas: ${v9.join(', ')}`,
-      fix: v9.length === 0 ? undefined : 'correr 0011_integraciones.sql',
+      fix:
+        v9.length === 0
+          ? undefined
+          : 'correr 0011_integraciones.sql y 0013_agente_de_agendamiento.sql, y revisar los grants globales de skill_grants',
     });
 
     // ── v10: el agente de agendamiento (P7) ───────────────────────────────

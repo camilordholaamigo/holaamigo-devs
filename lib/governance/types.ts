@@ -11,7 +11,19 @@ export type Level = 0 | 1 | 2 | 3 | 4 | 5;
 
 export type Verdict = 'allowed' | 'downgraded' | 'blocked';
 
-export type RiskClass = 'read' | 'write' | 'external_comms' | 'spend' | 'irreversible';
+/**
+ * `self_outreach` sale del edificio, igual que `external_comms`, pero el que
+ * recibe el mensaje es la PROPIA organización — no un contacto suyo. La
+ * distinción no es semántica: el plan del cliente y la autonomía que le soltó a
+ * sus agentes gobiernan lo segundo y no lo primero. Ver 0016 y ADR 0025.
+ */
+export type RiskClass =
+  | 'read'
+  | 'write'
+  | 'external_comms'
+  | 'self_outreach'
+  | 'spend'
+  | 'irreversible';
 
 export type PlanTier = 'diagnostico' | 'starter' | 'growth' | 'enterprise';
 

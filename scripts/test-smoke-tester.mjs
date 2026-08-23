@@ -151,13 +151,19 @@ console.log('\n\x1b[1m2 · Lo que 0014 tenía que dejar\x1b[0m');
     where tgrelid = 'holaamigo.smoke_probes'::regclass and not tgisinternal`);
   check('smoke_probes tiene su trigger de updated_at', trig.length >= 1);
 
+  // Se verifica que ESTÉN las tres de 0014, no que sean las únicas — mismo
+  // error que ya cometí con la lista de tablas. Una migración posterior que
+  // agregue un molde de fábrica no puede romper esta prueba: si lo rompiera,
+  // el chequeo estaría pidiendo mantenimiento en vez de proteger algo.
+  const moldes = ['faq', 'servicio', 'ventas'];
   const { rows: plantillas } = await db.query(
-    `select id from holaamigo.smoke_templates where es_semilla order by 1`,
+    `select id from holaamigo.smoke_templates where es_semilla and id = any($1) order by 1`,
+    [moldes],
   );
   check(
-    'las tres pruebas de fábrica',
-    plantillas.map((r) => r.id).join(',') === 'faq,servicio,ventas',
-    plantillas.map((r) => r.id).join(','),
+    'las tres pruebas de fábrica de 0014',
+    plantillas.length === moldes.length,
+    `faltan: ${moldes.filter((m) => !plantillas.some((r) => r.id === m)).join(', ')}`,
   );
 
   const { rows: cap } = await db.query(
@@ -166,9 +172,68 @@ console.log('\n\x1b[1m2 · Lo que 0014 tenía que dejar\x1b[0m');
   );
   check('la capacidad está en el catálogo', cap.length === 1);
   check(
-    'escribirle a un tercero es external_comms y no llega a L5',
-    cap[0]?.risk_class === 'external_comms' && cap[0]?.platform_ceiling === 4,
+    'el mensaje sale del edificio y el techo de plataforma no llega a L5',
+    cap[0]?.risk_class === 'self_outreach' && cap[0]?.platform_ceiling === 4,
     JSON.stringify(cap[0] ?? {}),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n\x1b[1m2b · La correa DEJA correr la prueba en el escenario real\x1b[0m');
+
+// Esta sección existe por un bug de producción: el smoke tester automático no
+// corrió NUNCA. `smoketest.probe` estaba clasificada como `external_comms`, y
+// para eso el plan `diagnostico` topa en 2 y la autonomía `propose` topa en 1
+// — o sea nivel efectivo 1, bloqueado. Y ése es exactamente el único escenario
+// donde la capacidad se usa: un prospecto que acaba de llegar, en plan gratis,
+// sin agentes configurados.
+//
+// El síntoma era una línea de log que nadie miraba. Estas dos comprobaciones
+// son las que lo habrían gritado. Ver la migración 0016.
+{
+  const { rows: org } = await db.query(
+    `insert into holaamigo.organizations (website_url) values ('https://correa-test.co')
+     returning id`,
+  );
+  const orgId = org[0].id;
+
+  const autorizar = async (capacidad) => {
+    const { rows } = await db.query(
+      'select holaamigo.autorizar($1, $2, $3::jsonb, null, false) as r',
+      [orgId, capacidad, '{}'],
+    );
+    return rows[0].r;
+  };
+
+  const { rows: plan } = await db.query(
+    `select plan from holaamigo.organizations where id = $1`,
+    [orgId],
+  );
+  check(
+    'el prospecto arranca en el plan gratis, como en la vida real',
+    plan[0].plan === 'diagnostico',
+    `plan = ${plan[0].plan}`,
+  );
+
+  const prueba = await autorizar('smoketest.probe');
+  check(
+    'un prospecto en plan gratis SÍ se puede probar',
+    prueba.accion_permitida === 'ejecutar',
+    `${prueba.accion_permitida} · nivel ${prueba.effective_level} · ${prueba.reason ?? ''}`,
+  );
+  check(
+    'y llega al nivel 4, no más',
+    prueba.effective_level === 4,
+    `nivel ${prueba.effective_level}`,
+  );
+
+  // El otro lado de la moneda: lo que SÍ tiene que seguir topado por el plan.
+  // Si esto pasara a 'ejecutar', la clase nueva estaría abriendo de más.
+  const responder = await autorizar('outreach.reply');
+  check(
+    'pero contestarle a un contacto SUYO sigue topado por el plan gratis',
+    responder.accion_permitida !== 'ejecutar',
+    `${responder.accion_permitida} · nivel ${responder.effective_level}`,
   );
 }
 

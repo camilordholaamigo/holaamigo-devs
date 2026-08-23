@@ -23,6 +23,7 @@ const RIESGO: Record<string, { label: string; tone: 'neutral' | 'money' | 'leak'
   read: { label: 'lectura', tone: 'muted' },
   write: { label: 'escritura', tone: 'muted' },
   external_comms: { label: 'habla con terceros', tone: 'neutral' },
+  self_outreach: { label: 'habla con el cliente mismo', tone: 'neutral' },
   spend: { label: 'gasta plata', tone: 'leak' },
   irreversible: { label: 'irreversible', tone: 'leak' },
 };

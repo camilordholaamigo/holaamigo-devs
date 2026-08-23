@@ -455,6 +455,12 @@ on conflict (provider, channel_uuid) do nothing;
 -- nuestro número, y un número quemado por Meta no se recupera con un rollback.
 -- L4 significa que puede ejecutar sin aprobación previa pero queda registrado
 -- y es reversible dentro de la ventana; L5 sería «hacelo y ni lo cuentes».
+--
+-- OJO: la `risk_class` de acá está MAL y `0016` la corrige a `self_outreach`.
+-- Se deja como estaba porque en este punto de la historia esa clase todavía no
+-- existe y el CHECK la rechazaría. Con `external_comms`, el plan del prospecto
+-- y la autonomía de sus agentes dejaban la capacidad en nivel 1 — o sea
+-- inalcanzable en el único escenario donde se usa. Ver el encabezado de 0016.
 
 insert into holaamigo.capabilities
   (id, agent_role, display_name, description, client_explanation, risk_class,
