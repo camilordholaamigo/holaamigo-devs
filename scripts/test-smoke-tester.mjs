@@ -669,6 +669,51 @@ console.log('\n\x1b[1m8 · Las invariantes del código que trajo 0017\x1b[0m');
   check('el POST de lotes ya no existe: hay un solo camino de creación', !sobrevive);
   const lanzar = await leer('lib/pruebas/lanzar.ts');
   check('y lanzarDesdeAdmin se fue de lanzar.ts', !/export async function lanzarDesdeAdmin/.test(lanzar));
+
+  // (f) La llave se normaliza antes de salir. El panel de Callbell muestra el
+  //     token ya escrito como cabecera (`Bearer xxx`), así se copia, y así entra
+  //     a la variable. Con el prefijo pegado el header sale `Bearer Bearer …` y
+  //     la API contesta 401 «not authorized», que es indistinguible de una llave
+  //     vencida. Costó una tarde el 2026-08-23. Se verifica que el header NO lea
+  //     `process.env` directo: es el único punto donde el bug puede volver.
+  const callbell = await leer('lib/pruebas/callbell.ts');
+  check(
+    'llaveCallbell() le saca el prefijo Bearer a la variable',
+    /export function llaveCallbell\(\)[\s\S]{0,400}?replace\(\/\^bearer/i.test(callbell),
+  );
+  check(
+    'y el header usa llaveCallbell(), no process.env: es donde vuelve el 401',
+    /authorization: `Bearer \$\{llaveCallbell\(\)\}`/.test(callbell) &&
+      !/authorization: `Bearer \$\{process\.env/.test(callbell),
+  );
+  check(
+    'faltaParaEnviar() mira la llave normalizada: una variable que solo dice «Bearer » falta',
+    /if \(!llaveCallbell\(\)\) falta\.CALLBELL_API_KEY = true;/.test(callbell),
+  );
+
+  // (g) El camino del cliente manda `plantillas`, no `aMedida`. Es lo único que
+  //     hace que el compilador lea el research: con `aMedida` la pantalla diría
+  //     «como en el diagnóstico» y mandaría un guion escrito a mano, que es
+  //     precisamente la cosa que no reproduce el escenario del cliente.
+  const formulario = await leer('components/prueba-nueva.tsx');
+  check(
+    'cuerpoDelCliente manda plantillas y no aMedida',
+    /function cuerpoDelCliente\(\)[\s\S]*?plantillas: bateria\.map/.test(formulario) &&
+      !/function cuerpoDelCliente\(\)[\s\S]*?aMedida:/.test(
+        formulario.slice(
+          formulario.indexOf('function cuerpoDelCliente'),
+          formulario.indexOf('function cuerpoAMano'),
+        ),
+      ),
+  );
+  // La lista de clientes NO se filtra por «tiene número». El research solo
+  // registra los publicados, y filtrar por eso dejaba la pantalla vacía justo
+  // para los clientes que sí tienen análisis.
+  const pantalla = await leer('app/admin/pruebas/nueva/page.tsx');
+  check(
+    'la lista de clientes sale de organizations, no de smoke_targets',
+    /\.from\('organizations'\)/.test(pantalla),
+  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

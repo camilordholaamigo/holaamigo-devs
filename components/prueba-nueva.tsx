@@ -42,12 +42,37 @@ import type { CanalRow, Persona } from '@/lib/pruebas/types';
  * segundos —«la llave venció»— en una investigación de veinte minutos.
  */
 
-export interface OrgConLinea {
+/**
+ * Un cliente o prospecto que ya pasó por la landing.
+ *
+ * `telefono` puede ser null y eso NO lo descalifica: el research solo registra
+ * los números que encontró publicados en el sitio, y un negocio que no publica
+ * WhatsApp igual se puede probar — el número lo escribe el operador y el
+ * análisis sigue sirviendo para compilar las preguntas.
+ */
+export interface ClienteProbable {
   id: string;
   nombre: string;
-  telefono: string;
-  ultima_prueba_at: string | null;
+  dominio: string | null;
+  lifecycle: string;
+  telefono: string | null;
+  /** La URL donde el research leyó el número. Null = lo puso una persona. */
+  fuenteTelefono: string | null;
+  ultimaPruebaAt: string | null;
+  bloqueado: boolean;
+  /** Hay research en `done` o `partial`: el compilador tiene de dónde leer. */
+  tieneAnalisis: boolean;
 }
+
+/** Un molde de la batería del diagnóstico, para poder nombrar qué va a correr. */
+export interface MoldeDeBateria {
+  id: string;
+  nombre: string;
+  que_mide: string;
+  max_turnos: number;
+}
+
+type Camino = 'cliente' | 'numero';
 
 interface Conocido {
   conocido: boolean;
@@ -74,18 +99,26 @@ const ENTRADA_INICIAL: EntradaAMedida = {
 
 export function PruebaNueva({
   canales,
-  organizaciones,
+  clientes,
+  bateria,
 }: {
   canales: CanalRow[];
-  organizaciones: OrgConLinea[];
+  clientes: ClienteProbable[];
+  bateria: MoldeDeBateria[];
 }) {
   const router = useRouter();
+
+  // Arranca en «cliente» cuando hay alguno: es el caso que más se pide y el que
+  // estaba escondido. Con la base vacía no tiene sentido ofrecerlo.
+  const [camino, setCamino] = useState<Camino>(clientes.length > 0 ? 'cliente' : 'numero');
+  const [clienteId, setClienteId] = useState<string | null>(null);
+  const [busqueda, setBusqueda] = useState('');
+  const [telefonoCliente, setTelefonoCliente] = useState('');
 
   const [e, setE] = useState<EntradaAMedida>(ENTRADA_INICIAL);
   const [telefono, setTelefono] = useState('');
   const [varios, setVarios] = useState('');
   const [modoVarios, setModoVarios] = useState(false);
-  const [orgIds, setOrgIds] = useState<string[]>([]);
   const [elegidas, setElegidas] = useState<string[]>(canales[0] ? [canales[0].id] : []);
   const [conocido, setConocido] = useState<Conocido | null>(null);
   const [redactando, setRedactando] = useState(false);
@@ -97,13 +130,33 @@ export function PruebaNueva({
   const set = <K extends keyof EntradaAMedida>(k: K, v: EntradaAMedida[K]) =>
     setE((prev) => ({ ...prev, [k]: v }));
 
+  // ── el cliente elegido ──────────────────────────────────────────────────
+  const cliente = useMemo(
+    () => clientes.find((c) => c.id === clienteId) ?? null,
+    [clientes, clienteId],
+  );
+
+  const filtrados = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    if (!q) return clientes.slice(0, 12);
+    return clientes
+      .filter((c) => `${c.nombre} ${c.dominio ?? ''}`.toLowerCase().includes(q))
+      .slice(0, 12);
+  }, [clientes, busqueda]);
+
+  /** El número al que se le va a escribir en el camino del cliente. */
+  const telefonoDelCliente = cliente?.telefono ?? (esTelefono(telefonoCliente) ? telefonoCliente : null);
+
   // ── cuentas ─────────────────────────────────────────────────────────────
   const numeros = useMemo(
     () => (modoVarios ? lineasDeNumeros(varios) : [telefono].filter(esTelefono)),
     [modoVarios, varios, telefono],
   );
-  const cuantosNumeros = numeros.length + orgIds.length;
-  const conversaciones = cuantosNumeros * elegidas.length;
+  const cuantosNumeros = camino === 'cliente' ? (telefonoDelCliente ? 1 : 0) : numeros.length;
+  // En el camino del cliente corre la batería entera —el mismo guion que el
+  // disparo automático—, así que cada línea abre una conversación por molde.
+  const guiones = camino === 'cliente' ? bateria.length : 1;
+  const conversaciones = cuantosNumeros * elegidas.length * guiones;
 
   // Las sugerencias se calculan pero no se escriben en el estado: el campo vacío
   // muestra el sugerido como placeholder y el servidor usa el mismo. Así el
@@ -120,13 +173,25 @@ export function PruebaNueva({
   };
 
   const problema =
-    cuantosNumeros === 0
-      ? 'Escribí a qué número le vamos a escribir.'
-      : elegidas.length === 0
-        ? 'Elegí desde qué línea nuestra sale el mensaje.'
-        : conocido?.bloqueado
-          ? 'Ese número pidió que no le escribiéramos. No se puede probar.'
-          : validarAMedida(entradaFinal);
+    camino === 'cliente'
+      ? !cliente
+        ? 'Elegí a qué cliente le vamos a escribir.'
+        : cliente.bloqueado
+          ? 'La línea de ese cliente pidió que no le escribiéramos. No se puede probar.'
+          : !telefonoDelCliente
+            ? 'No tenemos su número: escribilo para poder probarlo.'
+            : elegidas.length === 0
+              ? 'Elegí desde qué línea nuestra sale el mensaje.'
+              : bateria.length === 0
+                ? 'La batería del diagnóstico está vacía. Revisá los moldes en /admin/pruebas.'
+                : null
+      : cuantosNumeros === 0
+        ? 'Escribí a qué número le vamos a escribir.'
+        : elegidas.length === 0
+          ? 'Elegí desde qué línea nuestra sale el mensaje.'
+          : conocido?.bloqueado
+            ? 'Ese número pidió que no le escribiéramos. No se puede probar.'
+            : validarAMedida(entradaFinal);
 
   // ── mirar el número antes de escribirle ─────────────────────────────────
   async function mirarNumero(valor: string) {
@@ -202,32 +267,7 @@ export function PruebaNueva({
       const res = await fetch('/api/admin/pruebas', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          nombre: entradaFinal.negocio,
-          proposito: orgIds.length > 0 ? 'qa' : 'prospeccion',
-          // El nombre y la organización valen para el número que se miró, no
-          // para treinta pegados: ponerle «Clínica Mirla» y su organización a
-          // toda una lista asociaría números ajenos a un cliente nuestro, y eso
-          // después se lee como si el research los hubiera encontrado ahí.
-          numeros: numeros.map((n) => ({
-            telefono: n,
-            nombre: modoVarios ? null : entradaFinal.negocio || null,
-            organizationId: modoVarios ? null : conocido?.organizationId ?? null,
-          })),
-          organizationIds: orgIds,
-          canales: elegidas,
-          aMedida: {
-            ...entradaFinal,
-            contexto: entradaFinal.contexto || null,
-            instrucciones: entradaFinal.instrucciones || null,
-          },
-          // Una conversación viva por línea, más tres. Con una línea da 4, que
-          // es el default que ADR 0026 midió para un barrido; con tres da 6, que
-          // alcanza para que las tres abran contra el mismo negocio antes de
-          // pasar al siguiente. El techo de 12 es el de la columna.
-          maxConcurrentes: Math.min(12, elegidas.length + 3),
-          ritmoSegundos: 45,
-        }),
+        body: JSON.stringify(camino === 'cliente' ? cuerpoDelCliente() : cuerpoAMano()),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -245,11 +285,173 @@ export function PruebaNueva({
     }
   }
 
+  /**
+   * El camino del cliente: **no manda `aMedida`**.
+   *
+   * Manda `plantillas`, que es lo que hace que el compilador lea el research y
+   * escriba las preguntas contra los hechos del sitio. Es literalmente el mismo
+   * cuerpo que arma el disparo automático del diagnóstico, y por eso reproduce
+   * el escenario que el cliente va a ver en vez de parecerse a él.
+   *
+   * El número va por `organizationIds` cuando lo conocemos —ahí el servidor lo
+   * saca de `smoke_targets`, donde el research lo dejó con su fuente— y por
+   * `numeros` con la organización pegada cuando lo escribió una persona. El
+   * segundo caso no es degradado: la organización viaja igual, así que la ficha
+   * de verdad entra y la prueba mide exactitud lo mismo.
+   */
+  function cuerpoDelCliente() {
+    if (!cliente) return {};
+    const conocemosSuNumero = Boolean(cliente.telefono);
+    return {
+      nombre: `${cliente.nombre} · como en el diagnóstico`,
+      proposito: 'qa',
+      numeros: conocemosSuNumero
+        ? []
+        : [{ telefono: telefonoCliente, nombre: cliente.nombre, organizationId: cliente.id }],
+      organizationIds: conocemosSuNumero ? [cliente.id] : [],
+      canales: elegidas,
+      plantillas: bateria.map((m) => m.id),
+      maxConcurrentes: Math.min(12, elegidas.length + 3),
+      ritmoSegundos: 45,
+      notas: `Reproducción manual del disparo automático para ${cliente.dominio ?? cliente.nombre}.`,
+    };
+  }
+
+  function cuerpoAMano() {
+    return {
+      nombre: entradaFinal.negocio,
+      proposito: 'prospeccion',
+      // El nombre y la organización valen para el número que se miró, no para
+      // treinta pegados: ponerle «Clínica Mirla» y su organización a toda una
+      // lista asociaría números ajenos a un cliente nuestro, y eso después se
+      // lee como si el research los hubiera encontrado ahí.
+      numeros: numeros.map((n) => ({
+        telefono: n,
+        nombre: modoVarios ? null : entradaFinal.negocio || null,
+        organizationId: modoVarios ? null : conocido?.organizationId ?? null,
+      })),
+      canales: elegidas,
+      aMedida: {
+        ...entradaFinal,
+        contexto: entradaFinal.contexto || null,
+        instrucciones: entradaFinal.instrucciones || null,
+      },
+      // Una conversación viva por línea, más tres. Con una línea da 4, que es el
+      // default que ADR 0026 midió para un barrido; con tres da 6, que alcanza
+      // para que las tres abran contra el mismo negocio antes de pasar al
+      // siguiente. El techo de 12 es el de la columna.
+      maxConcurrentes: Math.min(12, elegidas.length + 3),
+      ritmoSegundos: 45,
+    };
+  }
+
   return (
     <form onSubmit={enviar} className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_400px]">
       {/* ══ la columna del formulario ══════════════════════════════════════ */}
       <div className="space-y-8">
-        {/* ── 1 · a quién ─────────────────────────────────────────────── */}
+        {/* ── 0 · qué querés probar ───────────────────────────────────── */}
+        {clientes.length > 0 ? (
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <TarjetaModo
+              activa={camino === 'cliente'}
+              onClick={() => setCamino('cliente')}
+              titulo="Un cliente nuestro"
+              insignia="un botón"
+              texto="Las preguntas las compila el sistema leyendo su análisis. Es el mismo guion que corre solo durante el diagnóstico."
+            />
+            <TarjetaModo
+              activa={camino === 'numero'}
+              onClick={() => setCamino('numero')}
+              titulo="Un número cualquiera"
+              insignia="a medida"
+              texto="El guion lo escribís vos. No hace falta que el negocio esté en nuestra base."
+            />
+          </div>
+        ) : null}
+
+        {camino === 'cliente' ? (
+          <>
+            {/* ── 1 · a quién ───────────────────────────────────────── */}
+            <Paso n={1} titulo="Qué cliente">
+              <Campo
+                etiqueta="Buscar"
+                valor={busqueda}
+                onChange={setBusqueda}
+                placeholder="conceptum"
+              />
+
+              <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+                {filtrados.length === 0 ? (
+                  <p className="py-6 text-center text-[13px] text-ink-faint">
+                    Ninguno coincide con «{busqueda}».
+                  </p>
+                ) : (
+                  filtrados.map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => {
+                        setClienteId(c.id);
+                        setTelefonoCliente('');
+                      }}
+                      className={cn(
+                        'w-full rounded-xl border px-4 py-3 text-left transition',
+                        clienteId === c.id
+                          ? 'border-ink bg-ink text-paper'
+                          : 'border-line bg-paper-raised hover:border-line-strong',
+                      )}
+                    >
+                      <div className="flex items-baseline justify-between gap-3">
+                        <p className="min-w-0 flex-1 truncate text-[13.5px] font-medium">
+                          {c.nombre}
+                        </p>
+                        <span
+                          className={cn(
+                            'tnum shrink-0 text-[12px]',
+                            clienteId === c.id ? 'text-paper/70' : 'text-ink-faint',
+                          )}
+                        >
+                          {c.telefono ?? 'sin número'}
+                        </span>
+                      </div>
+                      <p
+                        className={cn(
+                          'mt-0.5 truncate text-[12px]',
+                          clienteId === c.id ? 'text-paper/60' : 'text-ink-faint',
+                        )}
+                      >
+                        {c.dominio ?? 'sin dominio'}
+                        {c.tieneAnalisis ? ' · con análisis' : ' · sin análisis'}
+                        {c.ultimaPruebaAt ? ` · probado ${hace(c.ultimaPruebaAt)}` : ''}
+                      </p>
+                    </button>
+                  ))
+                )}
+              </div>
+
+              {clientes.length > filtrados.length && !busqueda.trim() ? (
+                <p className="text-[12.5px] text-ink-faint">
+                  Los {filtrados.length} más recientes de {clientes.length}. Buscá por nombre o
+                  dominio para ver el resto.
+                </p>
+              ) : null}
+
+              {cliente ? (
+                <FichaDelCliente
+                  cliente={cliente}
+                  telefonoEscrito={telefonoCliente}
+                  onTelefono={setTelefonoCliente}
+                />
+              ) : null}
+            </Paso>
+
+            {/* ── 2 · qué le decimos ─────────────────────────────────── */}
+            <Paso n={2} titulo="Qué le decimos">
+              <BateriaDelDiagnostico bateria={bateria} cliente={cliente} />
+            </Paso>
+          </>
+        ) : (
+        <>
         <Paso n={1} titulo="A quién le escribimos">
           {modoVarios ? (
             <div className="space-y-2">
@@ -324,41 +526,16 @@ export function PruebaNueva({
             >
               {modoVarios ? 'Volver a un solo número' : 'Probar varios números a la vez'}
             </button>
-            {organizaciones.length > 0 ? (
-              <span className="text-ink-faint">
-                o elegí clientes de la lista, más abajo en «QA de clientes»
-              </span>
+            {clientes.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setCamino('cliente')}
+                className="text-ink-faint underline decoration-line-strong underline-offset-2 transition hover:text-ink"
+              >
+                o elegí un cliente y usá su análisis
+              </button>
             ) : null}
           </div>
-
-          {organizaciones.length > 0 ? (
-            <details className="group rounded-xl border border-line bg-paper-sunken/50 px-4 py-3">
-              <summary className="cursor-pointer text-[13px] font-medium text-ink-soft transition group-open:mb-3 hover:text-ink">
-                QA de clientes · {orgIds.length > 0 ? `${orgIds.length} elegidos` : 'ninguno'}
-              </summary>
-              <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
-                {organizaciones.map((o) => (
-                  <label
-                    key={o.id}
-                    className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-[13px] transition hover:bg-paper-raised"
-                  >
-                    <input
-                      type="checkbox"
-                      checked={orgIds.includes(o.id)}
-                      onChange={() =>
-                        setOrgIds((prev) =>
-                          prev.includes(o.id) ? prev.filter((x) => x !== o.id) : [...prev, o.id],
-                        )
-                      }
-                      className="h-4 w-4 rounded border-line-strong"
-                    />
-                    <span className="min-w-0 flex-1 truncate text-ink">{o.nombre}</span>
-                    <span className="tnum shrink-0 text-[12px] text-ink-faint">{o.telefono}</span>
-                  </label>
-                ))}
-              </div>
-            </details>
-          ) : null}
         </Paso>
 
         {/* ── 2 · qué le decimos ──────────────────────────────────────── */}
@@ -471,6 +648,8 @@ export function PruebaNueva({
 
           <AjustesFinos e={e} set={set} />
         </Paso>
+        </>
+        )}
 
         {/* ── 3 · desde qué líneas ────────────────────────────────────── */}
         <Paso n={3} titulo="Desde qué líneas nuestras">
@@ -535,7 +714,11 @@ export function PruebaNueva({
       {/* ══ la columna de la vista previa ══════════════════════════════════ */}
       <div className="lg:sticky lg:top-8 lg:self-start">
         <div className="space-y-4">
-          <VistaPrevia entrada={entradaFinal} negocio={e.negocio} />
+          {camino === 'cliente' ? (
+            <QueSeVaACompilar cliente={cliente} bateria={bateria} />
+          ) : (
+            <VistaPrevia entrada={entradaFinal} negocio={e.negocio} />
+          )}
 
           <Card>
             <div className="space-y-3 p-5">
@@ -544,32 +727,55 @@ export function PruebaNueva({
               </p>
               <p className="tnum text-[14px] leading-relaxed text-ink">
                 {cuantosNumeros === 0 ? (
-                  <span className="text-ink-faint">Falta el número.</span>
+                  <span className="text-ink-faint">
+                    {camino === 'cliente' ? 'Falta el cliente.' : 'Falta el número.'}
+                  </span>
                 ) : (
                   <>
                     <strong>{cuantosNumeros}</strong>{' '}
                     {cuantosNumeros === 1 ? 'número' : 'números'} ×{' '}
                     <strong>{elegidas.length}</strong>{' '}
-                    {elegidas.length === 1 ? 'línea' : 'líneas'} ={' '}
-                    <strong>{conversaciones}</strong>{' '}
+                    {elegidas.length === 1 ? 'línea' : 'líneas'}
+                    {guiones > 1 ? (
+                      <>
+                        {' '}
+                        × <strong>{guiones}</strong> pruebas
+                      </>
+                    ) : null}{' '}
+                    = <strong>{conversaciones}</strong>{' '}
                     {conversaciones === 1 ? 'conversación' : 'conversaciones'}
                   </>
                 )}
               </p>
               <ul className="space-y-1.5 text-[12.5px] leading-relaxed text-ink-faint">
-                <li>
-                  Hasta {turnosDe(entradaFinal)} mensajes nuestros por conversación.
-                </li>
-                <li>
-                  {e.modo === 'guion'
-                    ? 'Cero llamadas a modelo: los mensajes ya están escritos.'
-                    : 'Una llamada barata al modelo por turno, para redactar la respuesta.'}
-                </li>
-                <li>
-                  {conocido?.organizationId
-                    ? 'Con research detrás: además se mide si dicen lo mismo que su sitio.'
-                    : 'Sin research detrás: se mide atención, no exactitud. No podemos acusar a nadie de inventar un dato que no podemos verificar.'}
-                </li>
+                {camino === 'cliente' ? (
+                  <>
+                    <li>
+                      Hasta {bateria.reduce((n, m) => Math.max(n, m.max_turnos), 0)} mensajes
+                      nuestros en la prueba más larga.
+                    </li>
+                    <li>Una llamada barata al modelo por turno, para redactar la respuesta.</li>
+                    <li>
+                      {cliente?.tieneAnalisis
+                        ? 'Con su análisis detrás: además se mide si dicen lo mismo que su sitio.'
+                        : 'Este cliente no tiene análisis terminado: se mide atención, no exactitud. No podemos acusar a nadie de inventar un dato que no podemos verificar.'}
+                    </li>
+                  </>
+                ) : (
+                  <>
+                    <li>Hasta {turnosDe(entradaFinal)} mensajes nuestros por conversación.</li>
+                    <li>
+                      {e.modo === 'guion'
+                        ? 'Cero llamadas a modelo: los mensajes ya están escritos.'
+                        : 'Una llamada barata al modelo por turno, para redactar la respuesta.'}
+                    </li>
+                    <li>
+                      {conocido?.organizationId
+                        ? 'Con research detrás: además se mide si dicen lo mismo que su sitio.'
+                        : 'Sin research detrás: se mide atención, no exactitud. No podemos acusar a nadie de inventar un dato que no podemos verificar.'}
+                    </li>
+                  </>
+                )}
               </ul>
             </div>
           </Card>
@@ -598,9 +804,13 @@ export function PruebaNueva({
           >
             {enviando
               ? 'Escribiendo…'
-              : conversaciones > 0
-                ? `Escribir ahora · ${conversaciones} ${conversaciones === 1 ? 'conversación' : 'conversaciones'}`
-                : 'Escribir ahora'}
+              : camino === 'cliente'
+                ? conversaciones > 0
+                  ? `Probar como en el diagnóstico · ${conversaciones} ${conversaciones === 1 ? 'conversación' : 'conversaciones'}`
+                  : 'Probar como en el diagnóstico'
+                : conversaciones > 0
+                  ? `Escribir ahora · ${conversaciones} ${conversaciones === 1 ? 'conversación' : 'conversaciones'}`
+                  : 'Escribir ahora'}
           </button>
 
           <p className="text-center text-[12px] leading-relaxed text-ink-faint">
@@ -609,6 +819,205 @@ export function PruebaNueva({
         </div>
       </div>
     </form>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EL CAMINO DEL CLIENTE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Lo que sabemos del cliente elegido, y el único campo que puede faltar.
+ *
+ * El número es el único dato que el análisis no siempre trae: el research solo
+ * registra los que están publicados en el sitio, porque ése es el freno que hace
+ * defendible el mensaje del camino automático (ADR 0025). Cuando no está, el
+ * operador lo escribe —el camino manual lleva un solo freno, el bloqueo— y la
+ * pantalla dice explícitamente qué freno se está saltando. Ocultarlo sería
+ * convertir una decisión en un accidente.
+ */
+function FichaDelCliente({
+  cliente,
+  telefonoEscrito,
+  onTelefono,
+}: {
+  cliente: ClienteProbable;
+  telefonoEscrito: string;
+  onTelefono: (v: string) => void;
+}) {
+  return (
+    <div className="space-y-3 rounded-xl border border-line bg-paper-sunken/50 p-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-[14px] font-semibold text-ink">{cliente.nombre}</p>
+        <Badge tone={cliente.tieneAnalisis ? 'money' : 'neutral'}>
+          {cliente.tieneAnalisis ? 'con análisis' : 'sin análisis'}
+        </Badge>
+        <Badge tone="neutral">{cliente.lifecycle}</Badge>
+      </div>
+
+      {cliente.dominio ? (
+        <p className="text-[12.5px] text-ink-faint">{cliente.dominio}</p>
+      ) : null}
+
+      {cliente.bloqueado ? (
+        <Aviso tono="error">
+          Su línea pidió que no le escribiéramos. No se puede probar, y no lo desbloquea nada
+          automático.
+        </Aviso>
+      ) : cliente.telefono ? (
+        <div className="space-y-1">
+          <p className="tnum text-[13.5px] text-ink">{cliente.telefono}</p>
+          <p className="text-[12px] leading-relaxed text-ink-faint">
+            {cliente.fuenteTelefono ? (
+              <>
+                Lo publicaron en su sitio —{' '}
+                <a
+                  href={cliente.fuenteTelefono}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline underline-offset-2"
+                >
+                  la fuente
+                </a>
+                . Es el mismo número al que le escribe el disparo automático.
+              </>
+            ) : (
+              'Lo escribió una persona: no está publicado en su sitio.'
+            )}
+            {cliente.ultimaPruebaAt ? ` Última prueba ${hace(cliente.ultimaPruebaAt)}.` : ''}
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <Campo
+            etiqueta="Su número de WhatsApp"
+            valor={telefonoEscrito}
+            onChange={onTelefono}
+            placeholder="+57 300 123 4567"
+          />
+          <p className="text-[12px] leading-relaxed text-ink-faint">
+            Su sitio no publica WhatsApp, así que el research no dejó ningún número — y por eso el
+            disparo automático no corrió contra ellos. Escribiéndolo acá la prueba sale igual, con
+            su análisis detrás, y queda registrado como puesto a mano.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Qué se va a mandar, dicho sin fingir precisión.
+ *
+ * Acá NO van globos de WhatsApp. En el camino a medida el preview puede ser
+ * literal porque el operador escribió las palabras; acá las escribe el
+ * compilador leyendo el research en el momento del lanzamiento, y pintar un
+ * globo con una pregunta inventada sería exactamente la clase de precisión falsa
+ * que ADR 0023 prohíbe. Lo que sí se puede decir con certeza es qué pruebas
+ * corren, en qué orden y qué mide cada una — y eso es lo que se dice.
+ */
+function BateriaDelDiagnostico({
+  bateria,
+  cliente,
+}: {
+  bateria: MoldeDeBateria[];
+  cliente: ClienteProbable | null;
+}) {
+  if (bateria.length === 0) {
+    return (
+      <Aviso tono="error">
+        La batería del diagnóstico está vacía: ninguno de los moldes configurados existe. Revisá los
+        moldes en{' '}
+        <Link href="/admin/pruebas#moldes" className="underline underline-offset-2">
+          Pruebas de línea
+        </Link>
+        .
+      </Aviso>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[13px] leading-relaxed text-ink-soft">
+        No hay nada que escribir. Corre la <strong>misma batería</strong> que dispara el diagnóstico
+        solo, en el mismo orden, y las preguntas las compila el sistema leyendo
+        {cliente?.tieneAnalisis ? ' el análisis de este cliente' : ' lo que haya del cliente'}.
+      </p>
+
+      <ol className="space-y-2">
+        {bateria.map((m, i) => (
+          <li key={m.id} className="flex gap-3 rounded-xl border border-line bg-paper-raised p-3.5">
+            <span className="tnum mt-0.5 shrink-0 text-[12px] font-semibold text-ink-faint">
+              {i + 1}
+            </span>
+            <div className="min-w-0 space-y-0.5">
+              <p className="text-[13.5px] font-medium text-ink">{m.nombre}</p>
+              <p className="text-[12.5px] leading-relaxed text-ink-faint">{m.que_mide}</p>
+            </div>
+            <span className="tnum ml-auto shrink-0 self-start text-[12px] text-ink-faint">
+              {m.max_turnos} turnos
+            </span>
+          </li>
+        ))}
+      </ol>
+
+      {cliente && !cliente.tieneAnalisis ? (
+        <Aviso tono="ojo">
+          Este cliente no tiene research terminado, así que la ficha de verdad va vacía: la prueba
+          mide si atienden, no si dicen la verdad. Sale igual y el informe lo dice.
+        </Aviso>
+      ) : null}
+    </div>
+  );
+}
+
+/** La versión de «lo que va a pasar» del camino del cliente. */
+function QueSeVaACompilar({
+  cliente,
+  bateria,
+}: {
+  cliente: ClienteProbable | null;
+  bateria: MoldeDeBateria[];
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <div className="flex items-center gap-2.5 border-b border-line bg-paper-sunken px-4 py-3">
+        <span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink text-[11px] font-semibold text-paper">
+          {(cliente?.nombre ?? '?').slice(0, 1).toUpperCase()}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[13px] font-medium text-ink">
+            {cliente?.nombre ?? 'elegí un cliente'}
+          </p>
+          <p className="text-[11px] text-ink-faint">
+            {cliente ? `${bateria.length} pruebas · nada se ha mandado` : 'nada se ha mandado'}
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-2.5 p-4">
+        {!cliente ? (
+          <p className="py-6 text-center text-[13px] text-ink-faint">
+            Elegí un cliente de la lista y acá aparece qué se le va a mandar.
+          </p>
+        ) : (
+          <>
+            <p className="text-[12.5px] leading-relaxed text-ink-soft">
+              La apertura y las preguntas se escriben en el momento del lanzamiento, contra los
+              hechos que el research leyó en su sitio. No se muestran acá porque todavía no existen:
+              quedan escritas, campo por campo, en la pantalla de la prueba.
+            </p>
+            <ul className="space-y-1">
+              {bateria.map((m) => (
+                <li key={m.id} className="text-[12.5px] text-ink-faint">
+                  · {m.nombre}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+      </div>
+    </Card>
   );
 }
 

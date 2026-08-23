@@ -153,6 +153,7 @@ El transporte. **Asíncrono**: mandamos un HTTP y la respuesta llega minutos
 después por un webhook. Todo `motor.ts` existe para sobrevivir a eso.
 
 ```ts
+llaveCallbell(): string | null
 faltaParaEnviar(): Record<string, true>
 hayTransporte(): boolean
 ```
@@ -160,6 +161,18 @@ hayTransporte(): boolean
 Precheque de entorno. Se llama **antes** de crear nada. Un 400 con
 `{ falta: { CALLBELL_API_KEY: true } }` ahorra horas frente a una prueba que se
 creó y «no hizo nada».
+
+`llaveCallbell()` es la llave **normalizada**, y el header no lee `process.env`:
+lo lee de acá. El panel de Callbell muestra el token ya escrito como cabecera
+—`Bearer EmbeccJyn…`— y así es como se copia y pega en Vercel. Con el prefijo
+adentro de la variable el header sale `Bearer Bearer …` y la API contesta
+`401 {"error":"not authorized"}`, que es indistinguible de una llave vencida:
+las dos cosas se ven como «Callbell rechazó la llave». Le sacamos el prefijo, así
+que **las dos formas funcionan**. Hay una prueba que verifica que el header no
+vuelva a leer la variable directo, porque es el único punto donde el bug puede
+regresar. Y `faltaParaEnviar()` mira la cadena normalizada: una variable que solo
+contiene `Bearer ` es una variable que falta, y el precheque tiene que decirlo
+antes de crear la prueba, no después del 401.
 
 ```ts
 canalActivo(canalId?: string | null): Promise<CanalRow | null>
@@ -657,6 +670,24 @@ cuenta de mensajes va escrita en el botón, y `GET /api/admin/pruebas?telefono=�
 le dice al operador cuándo fue la última prueba contra ese número **antes** de
 mandar.
 
+**El tercer caso: manual pero con organización.** Es el que produce el botón
+«Probar como en el diagnóstico» de `/admin/pruebas/nueva`, y no es ninguno de los
+dos anteriores: lo aprieta una persona, pero el objetivo lleva
+`organizationId`, así que `authorize('smoketest.probe')` **sí** corre y las
+preguntas las compila `compilar.ts` leyendo el research de esa organización.
+Reproduce a mano el escenario del disparo automático, salvo dos frenos que no
+puede tener por definición: el enfriamiento de 72 h (una persona que vuelve a
+probar el mismo cliente después de cambiarle algo al agente es el caso de uso, no
+el abuso) y la propiedad del número **cuando el research no encontró ninguno** —
+ahí lo escribe el operador y queda registrado con `origen: 'manual'` y
+`source_url: null`, que es la columna con la que después se distingue una prueba
+defendible de una que eligió una persona.
+
+Que un cliente no publique WhatsApp es lo normal, no la excepción, y filtrar la
+pantalla por «tiene número conocido» la dejaba vacía justo para los clientes que
+sí tienen análisis. La lista sale de `organizations`; el número es un campo que
+puede faltar.
+
 ---
 
 ## `resumen.ts`
@@ -825,7 +856,7 @@ verifica a mano con el procedimiento de
 
 | Ruta | Método | Para qué |
 |---|---|---|
-| `/api/admin/pruebas` | **POST** | **La única forma de crear una prueba a mano.** `números × líneas × guiones`. Devuelve `destino`: la transcripción si dio una conversación, la pantalla de la prueba si dio más |
+| `/api/admin/pruebas` | **POST** | **La única forma de crear una prueba a mano.** `números × líneas × guiones`. Devuelve `destino`: la transcripción si dio una conversación, la pantalla de la prueba si dio más. Dos cuerpos válidos: con `aMedida` el guion lo escribió una persona; con `plantillas` los compila el sistema leyendo el research de cada objetivo — es el cuerpo que manda el botón «Probar como en el diagnóstico» y el mismo que arma el disparo automático |
 | `/api/admin/pruebas` | GET | `?telefono=…` — si está bloqueado, cuándo fue la última prueba, si ya lo conocemos con nombre y organización. Es lo que reemplaza al enfriamiento en el camino manual |
 | `/api/admin/pruebas` | PATCH | cancelar · recalificar · desbloquear un número |
 | `/api/admin/pruebas/redactar` | POST | El **borrador** de un guion a partir de dos líneas escritas a las apuradas. Nunca falla hacia afuera: sin llave devuelve las sugerencias determinísticas de `guion.ts` con `degradado: true` |

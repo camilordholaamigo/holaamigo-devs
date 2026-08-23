@@ -29,9 +29,29 @@ const TIMEOUT_MS = 15_000;
  * con `{ falta: { CALLBELL_API_KEY: true } }` ahorra horas comparado con una
  * prueba que se creó, quedó en `pending` y «no hizo nada».
  */
+/**
+ * La llave, sin el `Bearer ` que viene pegado adelante.
+ *
+ * El panel de Callbell muestra el token ya escrito como cabecera —
+ * `Bearer EmbeccJyn…`— y así es como se copia. Si ese valor entra tal cual a la
+ * variable, el header sale `Bearer Bearer …` y Callbell contesta
+ * `401 {"error":"not authorized"}`, que es indistinguible de una llave vencida.
+ * Costó una tarde el 2026-08-23.
+ *
+ * Se normaliza acá y no en el header porque `faltaParaEnviar()` tiene que
+ * responder sobre la MISMA cadena que se va a mandar: una variable que solo
+ * contiene `Bearer ` es una variable que falta, y el precheque tiene que
+ * decirlo antes de crear la prueba y no después del 401.
+ */
+export function llaveCallbell(): string | null {
+  const raw = process.env.CALLBELL_API_KEY?.trim();
+  if (!raw) return null;
+  return raw.replace(/^bearer\s+/i, '').trim() || null;
+}
+
 export function faltaParaEnviar(): Record<string, true> {
   const falta: Record<string, true> = {};
-  if (!process.env.CALLBELL_API_KEY) falta.CALLBELL_API_KEY = true;
+  if (!llaveCallbell()) falta.CALLBELL_API_KEY = true;
   return falta;
 }
 
@@ -156,7 +176,7 @@ export async function enviarMensaje(spec: EnvioSpec): Promise<ResultadoEnvio> {
       method: 'POST',
       signal: controller.signal,
       headers: {
-        authorization: `Bearer ${process.env.CALLBELL_API_KEY}`,
+        authorization: `Bearer ${llaveCallbell()}`,
         'content-type': 'application/json',
         // Algunos hosts rechazan peticiones sin User-Agent y el error que
         // devuelven no lo dice. Cuesta una línea.
@@ -202,7 +222,7 @@ export async function enviarMensaje(spec: EnvioSpec): Promise<ResultadoEnvio> {
 
 function pistaPorEstado(status: number): string {
   if (status === 401 || status === 403) {
-    return 'Callbell rechazó la llave. Revisá CALLBELL_API_KEY en Vercel.';
+    return 'Callbell rechazó la llave. Revisá CALLBELL_API_KEY en Vercel — y acordate de que el despliegue que corre tiene la variable del momento en que se construyó: si la acabás de cambiar, hay que redesplegar.';
   }
   if (status === 404) {
     return 'Callbell no encontró el canal. Revisá el channel_uuid en /admin/pruebas.';

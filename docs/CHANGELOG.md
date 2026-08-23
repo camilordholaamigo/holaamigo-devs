@@ -8,6 +8,75 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.11.0] — 2026-08-23 · `Bearer Bearer`, y el botón que faltaba
+
+Dos cosas que impedían probar el smoke tester de punta a punta.
+
+### Arreglado
+
+- **`Bearer Bearer …`.** El panel de Callbell muestra el token ya escrito como
+  cabecera —`Bearer EmbeccJyn…`— y así es como se copia. El código ya ponía
+  `Bearer ${CALLBELL_API_KEY}`, así que con el prefijo adentro de la variable el
+  header salía duplicado y Callbell contestaba
+  `401 {"error":"not authorized"}`. Verificado contra la API: con un prefijo
+  responde 200, con dos responde 401.
+
+  Ahora `llaveCallbell()` le saca el prefijo y **las dos formas funcionan**. El
+  header no lee `process.env`: lo lee de esa función, y hay una prueba que
+  verifica que no vuelva a leerlo directo, porque ése es el único punto donde el
+  bug puede regresar. `faltaParaEnviar()` también mira la cadena normalizada —
+  una variable que solo contiene `Bearer ` es una variable que falta, y eso hay
+  que decirlo antes de crear la prueba, no después del 401. `GET
+  /api/admin/pruebas/diagnose` agrega `CALLBELL_API_KEY_traia_bearer` para que el
+  caso se vea de una.
+
+### Agregado
+
+- **`/admin/pruebas/nueva` ahora arranca eligiendo un cliente.** Dos caminos
+  arriba de la pantalla: *un cliente nuestro* o *un número cualquiera*. El
+  segundo es el de ADR 0027 y no cambió.
+
+- **El botón «Probar como en el diagnóstico».** Se elige el cliente y sale la
+  batería completa —`servicio → faq → ventas`, la de
+  `settings['pruebas.bateria']`— compilada contra su research. No es un atajo
+  para escribir el guion más rápido: manda `plantillas` en vez de `aMedida`, que
+  es el mismo cuerpo que arma el disparo automático. Reproduce el escenario del
+  cliente en vez de parecerse a él.
+
+- **La lista de clientes dejó de salir de `smoke_targets`.** Ahí estaba el bug de
+  verdad: esa tabla solo tiene los números que el research encontró
+  **publicados** en el sitio (ADR 0025), así que un cliente que no publica
+  WhatsApp —Conceptum, por ejemplo— desaparecía de la pantalla junto con todo su
+  análisis, y el bloque entero se ocultaba por estar vacío. Ahora sale de
+  `organizations` y el número es un campo que puede faltar: cuando falta, se
+  escribe a mano y queda registrado como `origen: 'manual'`, `source_url: null`.
+  La ficha del cliente dice cuál de los dos casos es y enlaza la fuente cuando la
+  hay.
+
+- **La columna derecha no finge en este camino.** No pinta globos de WhatsApp con
+  preguntas inventadas: las escribe el compilador en el momento del lanzamiento,
+  así que la pantalla lista qué pruebas corren, en qué orden y qué mide cada una,
+  y dice que el texto exacto queda en la pantalla de la prueba. Pintar un globo
+  con una pregunta que a lo mejor no sale con esas palabras es la clase de
+  precisión falsa que prohíbe [ADR 0023](adr/0023-mostrar-el-trabajo.md).
+
+Y el tercer caso de frenos —manual pero con organización— quedó escrito en
+[`docs/api/pruebas.md`](api/pruebas.md): `authorize('smoketest.probe')` **sí**
+corre, el enfriamiento de 72 h no, y el bloqueo sigue siendo terminal.
+
+### Despliegue
+
+1. `git push` — la integración de Git despliega a producción.
+2. **La variable no hay que tocarla.** Si `CALLBELL_API_KEY` tiene el `Bearer `
+   adelante, el código se lo saca. Lo que sí hace falta es que el despliegue sea
+   posterior a este commit.
+3. Confirmar con `GET /api/admin/pruebas/diagnose` (con sesión de admin):
+   `entorno.CALLBELL_API_KEY` en `true`.
+4. **Sin migración.** 0016 y 0017 ya corrieron: `db:v11` en `/api/health` está en
+   `true`.
+
+---
+
 ## [3.10.1] — 2026-08-23 · La env var que el dashboard mostraba y el build no tenía
 
 Arreglo de diagnóstico, no de producto. El síntoma fue el peor posible: la

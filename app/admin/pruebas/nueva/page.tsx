@@ -1,8 +1,9 @@
 import Link from 'next/link';
 import { db } from '@/lib/supabase/admin';
 import { Card, SectionTitle } from '@/components/ui';
-import { PruebaNueva, type OrgConLinea } from '@/components/prueba-nueva';
+import { PruebaNueva, type ClienteProbable, type MoldeDeBateria } from '@/components/prueba-nueva';
 import { canalesActivos, faltaParaEnviar } from '@/lib/pruebas/callbell';
+import { configDePruebas } from '@/lib/pruebas/lanzar';
 
 /**
  * /admin/pruebas/nueva — la única forma de armar una prueba a mano.
@@ -11,55 +12,110 @@ import { canalesActivos, faltaParaEnviar } from '@/lib/pruebas/callbell';
  * formulario tiene tres pasos y una vista previa al lado —en un modal habría que
  * elegir entre las dos cosas—, y la URL se puede compartir y volver a abrir.
  *
- * No necesita organización, ni research, ni nada: con un número y tres líneas de
- * texto sale una conversación. Ése era el punto de ADR 0027.
+ * Dos caminos, y el de arriba es el que más se usa:
+ *
+ *   1. **Un cliente nuestro.** Se elige de la lista y las preguntas las compila
+ *      el sistema leyendo su análisis, con la misma batería que corre el disparo
+ *      automático del diagnóstico. Es un botón, y sirve para reproducir a mano
+ *      exactamente lo que el cliente va a ver.
+ *   2. **Un número cualquiera.** El guion lo escribe una persona. No necesita
+ *      organización, ni research, ni nada. Ése era el punto de ADR 0027.
  */
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const metadata = { title: 'Nueva prueba de línea · admin', robots: { index: false } };
 
-interface LineaCruda {
-  organization_id: string | null;
-  phone_e164: string;
-  nombre: string | null;
-  ultima_prueba_at: string | null;
-  organizations: { name: string | null; domain: string | null } | null;
+interface OrgCruda {
+  id: string;
+  name: string | null;
+  domain: string | null;
+  lifecycle: string | null;
 }
 
 export default async function NuevaPruebaPage() {
-  const [canales, { data: lineas }] = await Promise.all([
+  const [canales, config, { data: orgsCrudas }] = await Promise.all([
     canalesActivos(),
-    // Las organizaciones que ya tienen una línea conocida. Es lo que hace usable
-    // el QA de clientes: se eligen de una lista en vez de pegar treinta
-    // teléfonos. Los números salen de donde el research los dejó, con su fuente.
+    configDePruebas(),
+    // Todo el que pasó por la landing, lo último primero. La lista NO se filtra
+    // por «tiene número conocido», que es lo que la dejaba vacía: el research
+    // solo escribe en `smoke_targets` los números que encontró PUBLICADOS en el
+    // sitio (ADR 0025), y un cliente que no publica WhatsApp —la mitad de los
+    // que valen— desaparecía de esta pantalla junto con todo su análisis. El
+    // número se puede escribir a mano; el análisis no se puede recuperar de
+    // ningún otro lado.
     db()
-      .from('smoke_targets')
-      .select(
-        'organization_id, phone_e164, nombre, ultima_prueba_at, confianza, organizations ( name, domain )',
-      )
-      .eq('bloqueado', false)
-      .not('organization_id', 'is', null)
-      .order('confianza', { ascending: false })
-      .limit(300),
+      .from('organizations')
+      .select('id, name, domain, lifecycle')
+      .order('created_at', { ascending: false })
+      .limit(150),
   ]);
 
-  const falta = Object.keys(faltaParaEnviar());
+  const orgs = (orgsCrudas ?? []) as OrgCruda[];
+  const ids = orgs.map((o) => o.id);
 
-  // Una línea por organización: la de mayor confianza, que es el orden en que
-  // vienen. Probar las tres líneas de treinta clientes son noventa
-  // conversaciones, y el QA quiere cobertura amplia, no profundidad.
-  const porOrg = new Map<string, OrgConLinea>();
-  for (const l of (lineas ?? []) as unknown as LineaCruda[]) {
-    if (!l.organization_id || porOrg.has(l.organization_id)) continue;
-    porOrg.set(l.organization_id, {
-      id: l.organization_id,
-      nombre: l.organizations?.name ?? l.organizations?.domain ?? l.nombre ?? l.phone_e164,
-      telefono: l.phone_e164,
-      ultima_prueba_at: l.ultima_prueba_at,
-    });
+  const [{ data: runs }, { data: targets }, { data: moldesCrudos }] = await Promise.all([
+    ids.length
+      ? db()
+          .from('research_runs')
+          .select('organization_id, status')
+          .in('organization_id', ids)
+          .in('status', ['done', 'partial'])
+      : Promise.resolve({ data: [] as { organization_id: string; status: string }[] }),
+    ids.length
+      ? db()
+          .from('smoke_targets')
+          .select('organization_id, phone_e164, source_url, ultima_prueba_at, bloqueado, confianza')
+          .in('organization_id', ids)
+          .order('confianza', { ascending: false })
+      : Promise.resolve({ data: [] as TargetCrudo[] }),
+    db()
+      .from('smoke_templates')
+      .select('id, nombre, que_mide, max_turnos')
+      .in('id', config.bateria),
+  ]);
+
+  const conAnalisis = new Set(
+    ((runs ?? []) as { organization_id: string | null }[])
+      .map((r) => r.organization_id)
+      .filter((x): x is string => Boolean(x)),
+  );
+
+  // La de mayor confianza por organización, que es el orden en que vienen.
+  const lineaDe = new Map<string, TargetCrudo>();
+  for (const t of (targets ?? []) as TargetCrudo[]) {
+    if (!t.organization_id || lineaDe.has(t.organization_id)) continue;
+    lineaDe.set(t.organization_id, t);
   }
-  const organizaciones = [...porOrg.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+  const clientes: ClienteProbable[] = orgs.map((o) => {
+    const linea = lineaDe.get(o.id);
+    return {
+      id: o.id,
+      nombre: o.name?.trim() || o.domain || 'sin nombre',
+      dominio: o.domain,
+      lifecycle: o.lifecycle ?? 'diagnostic',
+      telefono: linea?.phone_e164 ?? null,
+      // Con fuente = el research lo leyó en SU sitio. Es la diferencia entre el
+      // camino automático y el manual, y se muestra porque cambia qué tan
+      // defendible es el mensaje (ADR 0025).
+      fuenteTelefono: linea?.source_url ?? null,
+      ultimaPruebaAt: linea?.ultima_prueba_at ?? null,
+      bloqueado: Boolean(linea?.bloqueado),
+      tieneAnalisis: conAnalisis.has(o.id),
+    };
+  });
+
+  // En el orden de la batería, no en el que devuelve Postgres: el orden importa
+  // (`servicio` primero porque da en dos minutos el dato que el cliente lee).
+  const porId = new Map(
+    ((moldesCrudos ?? []) as MoldeDeBateria[]).map((m) => [m.id, m] as const),
+  );
+  const bateria: MoldeDeBateria[] = config.bateria
+    .map((id) => porId.get(id))
+    .filter((m): m is MoldeDeBateria => Boolean(m));
+
+  const falta = Object.keys(faltaParaEnviar());
 
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-6 py-10">
@@ -70,7 +126,7 @@ export default async function NuevaPruebaPage() {
         <SectionTitle
           eyebrow="Smoke tester"
           title="Nueva prueba"
-          subtitle="Le escribimos por WhatsApp a la línea de un negocio, como si fuéramos un cliente, y calificamos lo que pasa. Funciona con cualquier número: no hace falta que el negocio esté en nuestra base ni que le hayamos corrido research."
+          subtitle="Le escribimos por WhatsApp a la línea de un negocio, como si fuéramos un cliente, y calificamos lo que pasa. Puede ser un cliente nuestro —y ahí las preguntas salen de su análisis— o cualquier número, con el guion escrito a mano."
         />
       </div>
 
@@ -82,13 +138,23 @@ export default async function NuevaPruebaPage() {
             </p>
             <p className="text-[13px] leading-relaxed text-leak/80">
               Sin eso no sale ningún mensaje. Se carga en Vercel → Settings → Environment Variables
-              y se vuelve a desplegar.
+              y se vuelve a desplegar: el despliegue que está corriendo tiene las variables del
+              momento en que se construyó, así que agregarla no alcanza.
             </p>
           </div>
         </Card>
       ) : null}
 
-      <PruebaNueva canales={canales} organizaciones={organizaciones} />
+      <PruebaNueva canales={canales} clientes={clientes} bateria={bateria} />
     </main>
   );
+}
+
+interface TargetCrudo {
+  organization_id: string | null;
+  phone_e164: string;
+  source_url: string | null;
+  ultima_prueba_at: string | null;
+  bloqueado: boolean;
+  confianza: number | null;
 }

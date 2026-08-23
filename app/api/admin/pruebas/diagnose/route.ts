@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { currentAdmin } from '@/lib/auth/admin';
 import { db } from '@/lib/supabase/admin';
-import { canalActivo, enviarMensaje, faltaParaEnviar } from '@/lib/pruebas/callbell';
+import { canalActivo, enviarMensaje, faltaParaEnviar, llaveCallbell } from '@/lib/pruebas/callbell';
 import { configDePruebas } from '@/lib/pruebas/lanzar';
 import { aE164 } from '@/lib/pruebas/numeros';
 import { env } from '@/lib/env';
@@ -50,7 +50,10 @@ export async function GET() {
 
   return NextResponse.json({
     entorno: {
-      CALLBELL_API_KEY: Boolean(process.env.CALLBELL_API_KEY),
+      CALLBELL_API_KEY: Boolean(llaveCallbell()),
+      // Se dice aparte porque es el error más caro de este subsistema: con el
+      // prefijo pegado la variable «está» y Callbell contesta 401.
+      CALLBELL_API_KEY_traia_bearer: /^bearer\s/i.test(process.env.CALLBELL_API_KEY?.trim() ?? ''),
       CALLBELL_WEBHOOK_SECRET: Boolean(process.env.CALLBELL_WEBHOOK_SECRET),
       OPENAI_API_KEY: Boolean(process.env.OPENAI_API_KEY),
       CRON_SECRET: Boolean(env.cronSecret),
