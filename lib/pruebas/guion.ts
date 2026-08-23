@@ -169,9 +169,14 @@ export function planALaMedida(args: {
 
   const guion = e.modo === 'guion' ? limpiarLista(e.guion).slice(0, MAX_GUION) : [];
 
+  // `guion[0]` con la lista vacía sería `undefined`, y `apertura` está tipado
+  // como `string`: TypeScript no lo ve porque el índice de un array miente. El
+  // llamador valida antes, pero un plan con `apertura: undefined` mandaría el
+  // literal "undefined" por WhatsApp a un negocio real, y ese error no se
+  // arregla con un rollback.
   const apertura =
     e.modo === 'guion'
-      ? guion[0]
+      ? guion[0] || aperturaSugerida(negocio, producto)
       : e.apertura.trim() || aperturaSugerida(negocio, producto);
 
   // En modo guion las sondas son los mensajes 2..n. No es una traducción

@@ -221,7 +221,11 @@ export function PruebaNueva({
             contexto: entradaFinal.contexto || null,
             instrucciones: entradaFinal.instrucciones || null,
           },
-          maxConcurrentes: Math.max(1, Math.min(12, elegidas.length * 2)),
+          // Una conversación viva por línea, más tres. Con una línea da 4, que
+          // es el default que ADR 0026 midió para un barrido; con tres da 6, que
+          // alcanza para que las tres abran contra el mismo negocio antes de
+          // pasar al siguiente. El techo de 12 es el de la columna.
+          maxConcurrentes: Math.min(12, elegidas.length + 3),
           ritmoSegundos: 45,
         }),
       });
@@ -794,7 +798,9 @@ function Paso({ n, titulo, children }: { n: number; titulo: string; children: Re
         </span>
         <h2 className="text-[17px] font-semibold tracking-tight text-ink">{titulo}</h2>
       </div>
-      <div className="space-y-4 border-l border-line pl-[calc(0.75rem+12px)]">{children}</div>
+      {/* 36px = el círculo (24) + el gap (12): el contenido cae exactamente
+          debajo del título, no debajo del número. */}
+      <div className="space-y-4 pl-9">{children}</div>
     </section>
   );
 }
