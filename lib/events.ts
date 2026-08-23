@@ -47,7 +47,13 @@ export type PlgEvent =
    *  cuántos prospectos ni siquiera tienen por dónde recibir un mensaje. */
   | 'smoke_sin_numeros'
   /** El cliente miró el panel de la prueba en su diagnóstico. */
-  | 'smoke_visto';
+  | 'smoke_visto'
+  /** Lotes e informes. Ver docs/wiki/24-lotes-e-informes.md */
+  | 'smoke_batch_started'
+  | 'smoke_report_generated'
+  /** El cliente ABRIÓ su informe. Es la señal de compra más barata que
+   *  tenemos, y decide a quién llamar. No es telemetría: es producto. */
+  | 'smoke_report_viewed';
 
 export async function track(
   event: PlgEvent,

@@ -456,6 +456,128 @@ pero ya no preguntando a mano.
 
 ---
 
+## 16 · v4 — El smoke tester
+
+**Estado:** construido. Fase 1 en [ADR 0025](adr/0025-el-smoke-tester-como-evidencia.md),
+fase 2 en [ADR 0026](adr/0026-el-lote-y-el-informe.md).
+Cómo funciona: [wiki/23](wiki/23-smoke-tester.md) y [wiki/24](wiki/24-lotes-e-informes.md).
+Contrato del código: [`docs/api/pruebas.md`](api/pruebas.md).
+
+### 16.1 La tesis
+
+El diagnóstico (§7) es bueno y es, de punta a punta, una **proyección**. Las
+fugas salen de supuestos que el cliente puede mover; el embudo sale de la meta a
+90 días. Todo con su fórmula a la vista, y todo discutible.
+
+Faltaba una sola cosa en todo el producto que **no se pudiera discutir**:
+
+> «Le escribimos a tu línea de ventas a las 2:03. Contestaron a las 2:19.
+> Dieciséis minutos.»
+
+Un comprador sintético le escribe por WhatsApp al número que el propio sitio del
+cliente publica, la conversación corre hasta donde llegue, y se califica. No hay
+mocks: es la línea real, por el canal real, y nadie del otro lado sabe que es
+una prueba.
+
+### 16.2 De dónde salió
+
+Del paquete portable de Rentmies, que vive en `docs/referencia/smoke-tester/`
+con **doce bugs de producción documentados**. Tres de sus ocho deudas se
+resolvieron acá en el diseño y no como parche:
+
+| Deuda del original | Cómo quedó |
+|---|---|
+| Correlación contra «la conversación activa más reciente» | **Por número** (`target_phone` denormalizado) — permite probar N líneas en paralelo |
+| `turno` y `turn_token` dentro de un `jsonb` | **Columnas** — reclamar un turno es un update condicional, atómico |
+| La evaluación detrás de un botón | **Se dispara sola** al cerrar |
+
+### 16.3 Las tres capas de veredicto
+
+| Capa | Contesta | Cómo | Costo | Determinística |
+|---|---|---|---|---|
+| 1 · Estado terminal | ¿Contestaron? ¿En cuánto? | Restar timestamps | 0 | Sí |
+| 2 · Auditoría | ¿Cumplió los criterios? | Regex contra la rúbrica compilada | 0 | Sí |
+| 3 · Evaluación | ¿Estuvo bien hecho? | Modelo contra la ficha de verdad | ~USD 0,02 | No |
+
+**Con la capa 1 sola ya hay producto.** Las otras dos suman.
+
+La capa 3 **no devuelve números**: devuelve cinco juicios cualitativos y el
+código los convierte con una tabla fija. Pedirle un 78 a un modelo es falsa
+precisión — la misma transcripción le saca 74 y 79 — y esa cifra la lee el
+cliente (§13.4, ADR 0007).
+
+### 16.4 Los cuatro frenos
+
+Escribirle por WhatsApp a un negocio que no nos escribió primero es la acción
+más delicada del producto.
+
+1. **`authorize('smoketest.probe')`** — `external_comms`, techo de plataforma 4.
+   Un número quemado por Meta no se recupera con un rollback.
+2. **Propiedad del número** — en el camino automático tiene que estar publicado
+   en el sitio de la organización que pidió el diagnóstico.
+3. **Enfriamiento de 72 h**, global por número.
+4. **Bloqueo** — si piden que paremos, se corta en ese turno y **ningún camino
+   automático lo revierte**.
+
+Apagado de emergencia sin desplegar: `settings['pruebas.bateria'].activo`.
+
+### 16.5 El lote
+
+Treinta clientes × tres pruebas son **noventa conversaciones desde una sola
+línea de WhatsApp**. Un lote sin tope de concurrencia no es una feature a medio
+hacer: es la forma de perder el número.
+
+`max_concurrentes` (4, techo 12) y `ritmo_segundos` (45) son columnas de la
+tabla y no constantes, para poder bajarlas en caliente.
+
+Dos propósitos, un motor:
+
+| | `qa` | `prospeccion` |
+|---|---|---|
+| Quién | Nuestros clientes | Prospectos |
+| Pregunta | ¿A cuál se le rompió la IA? | ¿Qué le pasa a quien le escribe? |
+| Frenos | Nos contrataron | Los cuatro de §16.4 |
+
+### 16.6 El informe
+
+Enlace público con `share_token`, como el diagnóstico. Agrega lo que pasó y lo
+convierte en algo que se manda.
+
+**La frecuencia se cuenta sobre los criterios de la rúbrica, no sobre el texto
+del modelo.** «Falló en 4 de 5» es un problema del guion; «1 de 5» es una
+conversación mala. Esa distinción es todo el valor del análisis, y solo funciona
+con claves estables — las alucinaciones son texto libre y van **aparte,
+textuales y sin contar**, porque una cita resumida deja de ser prueba.
+
+**Un link, no un PDF adjunto.** Se previsualiza, no pesa, y —lo que decide— **se
+puede medir**. `vistas` y `visto_at` no son telemetría: saber que el prospecto
+abrió el informe tres veces es la señal de compra más barata que tenemos.
+
+El correo lo redacta el modelo y **lo manda una persona** (misma disciplina que
+§14 y ADR 0021), por Resend y no por SendGrid (ADR 0008).
+
+### 16.7 Métricas de v4
+
+| Métrica | Objetivo |
+|---|---|
+| Prospectos con al menos una prueba corrida | ≥ 80% de los que publican número |
+| Tiempo hasta la primera respuesta visible en el diagnóstico | < 5 min desde que el cliente entra |
+| Pruebas que terminan en `failed` por culpa nuestra | < 5% — es la métrica de confiabilidad del arnés |
+| Informes abiertos al menos una vez | ≥ 40% |
+| Costo por conversación | < USD 0,08 |
+| Cobertura de la tanda de QA semanal | 100% de los clientes activos |
+
+### 16.8 Qué sigue siendo manual, a propósito
+
+- **A quién se le escribe fuera del camino automático.** Lo elige una persona.
+- **Qué correo sale.** El sistema redacta; un humano aprieta enviar.
+- **Desbloquear un número.** Único camino de vuelta, y pasa por una persona.
+- **La verificación del motor por eventos.** Turnos, ráfagas y correlación no
+  tienen prueba automática: necesitan un proveedor respondiendo, y simularlo
+  probaría la simulación. El procedimiento a mano está en wiki/23.
+
+---
+
 ## Apéndice · Desvíos respecto al PRD original
 
 Todos deliberados, todos documentados.
@@ -468,3 +590,5 @@ Todos deliberados, todos documentados.
 | Admin con Supabase Auth + allowlist | Contraseña + cookie HMAC firmada | 0005 |
 | Sprints de 45 días | Todo en una sesión | Instrucción del fundador |
 | Conectar WhatsApp = registrar una intención | Conectar WhatsApp = compilar el agente | 0024 |
+| El diagnóstico termina en una proyección | El diagnóstico termina en una conversación real que pasó | 0025 |
+| Una prueba por prospecto | Tandas con tope de concurrencia, e informe compartible | 0026 |

@@ -44,7 +44,7 @@ import {
  */
 
 const CAMPOS = `
-  id, run_id, target_id, template_id, channel_id, organization_id, target_phone, plan, conversation,
+  id, run_id, batch_id, target_id, template_id, channel_id, organization_id, target_phone, plan, conversation,
   estado, cerro_con, turno, max_turnos, turn_token, awaiting_reply,
   enviado_at, primera_respuesta_at, segundos_primera_respuesta, ultimo_entrante_at,
   auditoria, auditoria_score, evaluacion, evaluacion_score,

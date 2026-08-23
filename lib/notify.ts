@@ -66,6 +66,67 @@ export async function sendDiagnosticEmail(args: {
   }
 }
 
+/**
+ * El informe de la prueba de línea, por correo.
+ *
+ * Va por **Resend y no por SendGrid**, y esa elección no es indiferente
+ * (ADR 0008). SendGrid es el motor de las campañas DE LOS CLIENTES y su
+ * reputación está atada a lo que ellos envían; meter nuestro outbound ahí
+ * contamina un dominio que no es nuestro para ensuciar. Esto es correo
+ * nuestro, a alguien que escribió su correo en nuestra landing — la misma
+ * naturaleza que el diagnóstico, y por eso el mismo canal.
+ *
+ * El cuerpo lo escribió el modelo y lo aprobó una persona en /admin/pruebas.
+ * Acá solo se arma el HTML y se manda.
+ */
+export async function sendInformeEmail(args: {
+  to: string;
+  company: string;
+  subject: string;
+  /** Texto plano, con {{link}} ya reemplazado. Párrafos separados por 
+
+. */
+  body: string;
+  url: string;
+}): Promise<{ sent: boolean; reason?: string }> {
+  const c = client();
+  if (!c) {
+    console.info(`[email] RESEND_API_KEY ausente. Informe de ${args.company}: ${args.url}`);
+    return { sent: false, reason: 'sin_credencial' };
+  }
+
+  const parrafos = args.body
+    .split(/\n{2,}/)
+    .map((p) => p.trim())
+    .filter(Boolean)
+    .map((p) => `<p style="font-size:16px">${escapeHtml(p).replace(/\n/g, '<br>')}</p>`)
+    .join('\n  ');
+
+  const html = `
+<div style="font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:520px;color:#111827;line-height:1.6">
+  ${parrafos}
+  <p style="margin:28px 0">
+    <a href="${args.url}" style="background:#111827;color:#fff;padding:13px 22px;border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">Ver el informe</a>
+  </p>
+  <p style="font-size:14px;color:#6b7280">Adentro están las conversaciones completas, tal como pasaron.</p>
+  <p style="font-size:14px;color:#6b7280">— El equipo de Hola Amigo</p>
+</div>`.trim();
+
+  try {
+    await c.emails.send({
+      from: env.emailFrom,
+      to: args.to,
+      subject: args.subject,
+      html,
+      text: `${args.body}\n\n${args.url}`,
+    });
+    return { sent: true };
+  } catch (err) {
+    console.error('[email] fallo al enviar el informe', err);
+    return { sent: false, reason: String(err) };
+  }
+}
+
 export async function alertSlack(args: {
   title: string;
   lines: string[];

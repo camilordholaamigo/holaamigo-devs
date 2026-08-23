@@ -3,6 +3,7 @@ import { parsearEntrante, resumirPayload } from '@/lib/pruebas/callbell';
 import { correlacionar } from '@/lib/pruebas/webhook';
 import { avanzarTurno, leerPrueba } from '@/lib/pruebas/motor';
 import { evaluarCerradasSinEvaluar } from '@/lib/pruebas/evaluador';
+import { avanzarLote } from '@/lib/pruebas/lote';
 
 /**
  * La entrada de todo el smoke tester.
@@ -107,7 +108,13 @@ export async function POST(request: Request) {
         // modelo sale acá mismo. Va después del turno y no adentro del cierre
         // para que cerrar nunca espere a una llamada de modelo.
         const prueba = await leerPrueba(pruebaId);
-        if (prueba.finished_at) await evaluarCerradasSinEvaluar(prueba.run_id);
+        if (prueba.finished_at) {
+          await evaluarCerradasSinEvaluar(prueba.run_id);
+          // Cerrar una prueba libera un cupo del lote. Empujar la cola acá es
+          // lo que hace que una tanda de treinta clientes avance sola sin
+          // depender de que alguien tenga la pantalla abierta.
+          if (prueba.batch_id) await avanzarLote(prueba.batch_id);
+        }
       } catch (err) {
         console.error('[callbell] el turno de fondo murió', err);
       }

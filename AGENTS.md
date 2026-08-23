@@ -34,6 +34,7 @@ ejecutar → documentar. No se salta ningún paso, ni cuando hay prisa.
 | **El tool list de un agente es una intersección que se calcula en runtime**, y una habilidad de clase `spend` o `irreversible` no se enciende sin operador y sin sobre. | [ADR 0022](docs/adr/0022-habilidades-y-crm-con-actor.md) |
 | **Nada en pantalla finge progreso que no está pasando**, y toda cifra adelantada sale de la misma función que produce la final. La agregación del embudo vive en SQL, no en el render. | [ADR 0023](docs/adr/0023-mostrar-el-trabajo.md) |
 | **El agente de agendamiento se compila del diagnóstico, y ningún número suyo lo escribe un modelo.** El esquema que va a OpenAI no tiene un solo `z.number()`, y `blanquearCifras()` borra las que se cuelen en el texto. El plan comercial ya no topa lo que el agente hace con sus propios objetos: solo lo que sale del edificio. | [ADR 0024](docs/adr/0024-el-agente-se-compila-del-diagnostico.md) |
+| **Un lote sin tope de concurrencia quema el número.** `max_concurrentes` y `ritmo_segundos` son columnas, no constantes. Y en el informe, la frecuencia se cuenta sobre los `id` de la rúbrica: las alucinaciones van textuales y sin agrupar, porque una cita resumida deja de ser prueba. | [ADR 0026](docs/adr/0026-el-lote-y-el-informe.md) |
 | **Al smoke tester le escribe gente real: cuatro frenos, no uno.** `authorize()`, el número tiene que estar publicado en el sitio de esa organización, 72 h de enfriamiento, y un bloqueo que ningún camino automático revierte. Y el evaluador no devuelve notas: devuelve juicios, y la nota la calcula el código. | [ADR 0025](docs/adr/0025-el-smoke-tester-como-evidencia.md) |
 
 ## Los seis principios (PRD §13)
@@ -54,6 +55,11 @@ siguiente ya dice, bórralo. Si explica por qué está así y qué pasaría si n
 déjalo.
 
 ## Antes de dar algo por terminado
+
+Y si tocaste `lib/pruebas/`, actualizar también
+[`docs/api/pruebas.md`](docs/api/pruebas.md): es el contrato que permite que
+otro equipo tome este subsistema y lo adapte. Una firma que cambió y no está
+ahí es una hora perdida de alguien que no escribió el código.
 
 ```bash
 npx tsc --noEmit

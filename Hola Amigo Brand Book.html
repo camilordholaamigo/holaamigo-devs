@@ -1,0 +1,646 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<title>Hola Amigo · Brand Book</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&family=Red+Hat+Display:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --violet-50:  #F3F1FF;
+  --violet-100: #E8E4FF;
+  --violet-200: #CDC3FF;
+  --violet-300: #A99BFF;
+  --violet-400: #8770FF;
+  --violet-500: #6A50F7;
+  --violet-600: #4F3AE0;
+  --violet-700: #3A2AB3;
+  --violet-800: #251C7A;
+  --violet-900: #15104A;
+
+  --cyan-300: #A8EEFF;
+  --cyan-400: #5CDCFF;
+  --cyan-500: #22D3EE;
+  --cyan-600: #0BB8D6;
+
+  --lime-400: #C7F364;
+  --coral-400: #FF7A6B;
+
+  --ink-900: #0E0B2B;
+  --ink-700: #2A2650;
+  --ink-500: #5A5780;
+  --ink-400: #8A87B0;
+  --ink-300: #BFBDD6;
+  --ink-200: #E4E3EF;
+  --ink-100: #F2F1F8;
+  --paper:   #FAFAFD;
+
+  --font-display: "Red Hat Display", system-ui, sans-serif;
+  --font-body: "Poppins", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; font-family: var(--font-body); font-size: 16px; line-height: 1.55; color: var(--ink-900); background: var(--paper); }
+
+.page {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 80px 64px 120px;
+}
+
+/* ---------- Hero ---------- */
+.hero {
+  position: relative;
+  background:
+    radial-gradient(80% 60% at 20% 110%, #6A50F7 0%, transparent 55%),
+    radial-gradient(60% 50% at 100% 0%, #2A1F8A 0%, transparent 55%),
+    linear-gradient(160deg, #1A1454 0%, #251C7A 55%, #3A2AB3 100%);
+  color: #fff;
+  border-radius: 32px;
+  padding: 72px 64px;
+  overflow: hidden;
+  margin-bottom: 96px;
+}
+.hero .eyebrow {
+  display: inline-flex; align-items: center; gap: 12px;
+  font-size: 16px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--cyan-400);
+  margin-bottom: 28px;
+}
+.hero .eyebrow::before {
+  content: ""; width: 32px; height: 2px; background: currentColor; border-radius: 2px;
+}
+.hero h1 {
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 88px;
+  line-height: 1.0;
+  letter-spacing: -0.03em;
+  margin: 0 0 24px;
+  max-width: 900px;
+}
+.hero h1 em {
+  color: var(--cyan-400);
+  font-style: italic;
+  font-weight: 500;
+}
+.hero p {
+  font-size: 20px;
+  color: rgba(255,255,255,0.78);
+  max-width: 720px;
+  margin: 0;
+}
+.hero .meta {
+  margin-top: 56px;
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px;
+  border-top: 1px solid rgba(255,255,255,0.15);
+  padding-top: 32px;
+}
+.hero .meta div { font-size: 16px; }
+.hero .meta div span {
+  display: block; font-size: 16px; color: rgba(255,255,255,0.55);
+  letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600;
+  margin-bottom: 6px;
+}
+.hero .meta div b {
+  font-family: var(--font-display); font-weight: 700; font-size: 22px;
+}
+
+/* ---------- Section ---------- */
+.section { margin-bottom: 96px; }
+.section-head { margin-bottom: 32px; }
+.section-eyebrow {
+  display: inline-flex; align-items: center; gap: 12px;
+  font-size: 16px; font-weight: 600; letter-spacing: 0.14em;
+  text-transform: uppercase; color: var(--violet-600);
+  margin-bottom: 16px;
+}
+.section-eyebrow::before {
+  content: ""; width: 28px; height: 2px; background: currentColor;
+}
+.section h2 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 56px;
+  letter-spacing: -0.02em;
+  line-height: 1.05;
+  margin: 0;
+  max-width: 900px;
+}
+.section .lede {
+  font-size: 20px;
+  color: var(--ink-500);
+  max-width: 720px;
+  margin: 16px 0 0;
+  line-height: 1.5;
+}
+
+/* ---------- Cards ---------- */
+.card {
+  background: #fff;
+  border-radius: 24px;
+  border: 1px solid var(--ink-200);
+  padding: 32px;
+}
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+
+/* ---------- Logo ---------- */
+.logo-card {
+  background: #fff;
+  border: 1px solid var(--ink-200);
+  border-radius: 24px;
+  padding: 56px;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 240px;
+}
+.logo-card.dark {
+  background: var(--violet-800);
+  border: none;
+}
+.logo-card img { max-height: 96px; max-width: 80%; }
+.logo-card.dark img { filter: brightness(0) invert(1); }
+
+.mascot-card {
+  background: linear-gradient(155deg, var(--violet-50), #fff);
+  border: 1px solid var(--ink-200);
+  border-radius: 24px;
+  padding: 40px;
+  display: flex; align-items: center; gap: 32px;
+}
+.mascot-card img { height: 200px; }
+
+/* ---------- Color swatch ---------- */
+.swatch {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid var(--ink-200);
+}
+.swatch .chip {
+  height: 140px;
+  display: flex; align-items: flex-end; padding: 16px;
+  font-family: var(--font-mono); font-size: 16px; color: #fff; font-weight: 500;
+}
+.swatch .chip.dark-text { color: var(--ink-900); }
+.swatch .info {
+  padding: 16px;
+  background: #fff;
+}
+.swatch .info .name {
+  font-family: var(--font-display); font-weight: 700; font-size: 17px;
+}
+.swatch .info .role {
+  font-size: 16px; color: var(--ink-500); margin-top: 2px;
+}
+.swatch .info .hex {
+  font-family: var(--font-mono); font-size: 16px; color: var(--ink-700);
+  margin-top: 8px;
+}
+
+/* ---------- Type spec ---------- */
+.type-spec {
+  display: grid; grid-template-columns: 200px 1fr; gap: 32px; align-items: baseline;
+  padding: 32px 0;
+  border-bottom: 1px solid var(--ink-200);
+}
+.type-spec:last-child { border-bottom: none; }
+.type-spec .label {
+  font-family: var(--font-mono); font-size: 16px;
+  color: var(--ink-500); text-transform: uppercase; letter-spacing: 0.08em;
+}
+.type-spec .label b {
+  display: block; color: var(--ink-900); font-family: var(--font-body); font-weight: 600;
+  text-transform: none; letter-spacing: 0; font-size: 16px; margin-bottom: 4px;
+}
+.type-spec .sample { color: var(--ink-900); }
+
+/* ---------- Token table ---------- */
+table {
+  width: 100%; border-collapse: collapse; font-size: 16px;
+}
+table th {
+  text-align: left; font-family: var(--font-display); font-weight: 700;
+  font-size: 16px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--violet-600);
+  padding: 12px 16px; background: var(--violet-50);
+}
+table td {
+  padding: 16px; border-bottom: 1px solid var(--ink-100); color: var(--ink-700);
+}
+table td.token { font-family: var(--font-mono); color: var(--ink-900); font-weight: 500; }
+table tr:last-child td { border-bottom: none; }
+
+/* ---------- Voice ---------- */
+.voice-row {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+  margin-bottom: 16px;
+}
+.voice-card {
+  background: #fff;
+  border: 1px solid var(--ink-200);
+  border-radius: 18px;
+  padding: 24px 28px;
+}
+.voice-card.do { border-left: 4px solid var(--violet-500); }
+.voice-card.dont { border-left: 4px solid var(--coral-400); }
+.voice-card .tag {
+  font-size: 16px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.12em; margin-bottom: 8px;
+}
+.voice-card.do .tag { color: var(--violet-600); }
+.voice-card.dont .tag { color: var(--coral-400); }
+.voice-card p { margin: 0; font-size: 16px; color: var(--ink-700); }
+
+/* ---------- Component preview ---------- */
+.preview-panel {
+  background:
+    radial-gradient(80% 60% at 20% 110%, #6A50F7 0%, transparent 55%),
+    radial-gradient(60% 50% at 100% 0%, #2A1F8A 0%, transparent 55%),
+    linear-gradient(160deg, #1A1454 0%, #251C7A 55%, #3A2AB3 100%);
+  border-radius: 24px;
+  padding: 48px;
+  color: #fff;
+}
+.bubble-bot {
+  display: inline-block; max-width: 380px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  backdrop-filter: blur(12px);
+  padding: 14px 18px;
+  border-radius: 18px 18px 18px 4px;
+  font-size: 16px; color: #fff;
+}
+.bubble-user {
+  display: inline-block; max-width: 320px;
+  background: var(--cyan-500);
+  color: var(--violet-900);
+  padding: 14px 18px;
+  border-radius: 18px 18px 4px 18px;
+  font-size: 16px; font-weight: 500;
+  margin-left: 60%;
+}
+.btn-primary {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--violet-500); color: #fff;
+  padding: 14px 24px; border-radius: 999px;
+  font-family: var(--font-body); font-weight: 600; font-size: 16px;
+  border: none;
+}
+.btn-secondary {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: var(--cyan-500); color: var(--violet-900);
+  padding: 14px 24px; border-radius: 999px;
+  font-family: var(--font-body); font-weight: 600; font-size: 16px;
+  border: none;
+}
+.btn-ghost {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: transparent; color: #fff;
+  padding: 14px 24px; border-radius: 999px;
+  font-family: var(--font-body); font-weight: 600; font-size: 16px;
+  border: 1.5px solid rgba(255,255,255,0.4);
+}
+.pill-light {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 14px; border-radius: 999px;
+  background: rgba(168,238,255,0.15); color: var(--cyan-300);
+  font-size: 16px; font-weight: 500;
+}
+
+/* ---------- Logo do/don't ---------- */
+.usage-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.usage-cell {
+  border-radius: 18px; padding: 24px; height: 180px;
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: hidden;
+}
+.usage-cell .badge {
+  position: absolute; top: 12px; left: 12px;
+  font-size: 16px; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 4px 10px; border-radius: 999px;
+}
+.usage-cell.ok .badge { background: var(--violet-500); color: #fff; }
+.usage-cell.no .badge { background: var(--coral-400); color: #fff; }
+
+/* ---------- Footer ---------- */
+.footer {
+  text-align: center; padding: 64px 0; color: var(--ink-400);
+  font-size: 16px; border-top: 1px solid var(--ink-200);
+}
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- HERO -->
+  <header class="hero">
+    <div class="eyebrow">Brand Book · v1.0 · Abril 2026</div>
+    <h1>Hola Amigo.<br><em>El sistema de diseño.</em></h1>
+    <p>Una IA amigable, cercana y poderosa. Una plataforma que automatiza la comunicación. Un aliado estratégico para el crecimiento de nuestros clientes.</p>
+    <div class="meta">
+      <div><span>Producto</span><b>IA conversacional</b></div>
+      <div><span>Canal principal</span><b>WhatsApp · Instagram</b></div>
+      <div><span>Posicionamiento</span><b>Amigable · Poderoso</b></div>
+      <div><span>Sitio</span><b>holaamigo.ai</b></div>
+    </div>
+  </header>
+
+  <!-- 01 LOGO -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-eyebrow">01 · Identidad</div>
+      <h2>Logo y mascota.</h2>
+      <p class="lede">El isotipo de Hola Amigo combina la marca tipográfica con un asistente conversacional ilustrado. La mascota encarna el tono: cercana, optimista, orientada a la acción.</p>
+    </div>
+
+    <div class="grid-2">
+      <div class="logo-card">
+        <img src="assets/logo-holaamigo.png" alt="Logo Hola Amigo"/>
+      </div>
+      <div class="logo-card dark">
+        <img src="assets/logo-holaamigo.png" alt="Logo Hola Amigo invertido"/>
+      </div>
+    </div>
+
+    <div class="mascot-card" style="margin-top: 24px;">
+      <img src="assets/mascot.png" alt="Mascota Hola Amigo"/>
+      <div>
+        <div style="font-family: var(--font-display); font-weight: 800; font-size: 32px; letter-spacing: -0.02em;">El Amigo.</div>
+        <p style="font-size: 16px; color: var(--ink-500); max-width: 380px; margin: 8px 0 0; line-height: 1.6;">
+          Asistente conversacional ilustrado en violeta y cian. Se usa siempre en interacciones del producto, materiales de venta y portadas de comunicación clave.
+        </p>
+      </div>
+    </div>
+
+    <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 22px; margin: 56px 0 16px;">Uso correcto del logo</h3>
+    <div class="usage-grid">
+      <div class="usage-cell ok" style="background: #fff; border: 1px solid var(--ink-200);">
+        <span class="badge">Sí</span>
+        <img src="assets/logo-holaamigo.png" style="max-height: 48px;" alt=""/>
+      </div>
+      <div class="usage-cell ok" style="background: var(--violet-800);">
+        <span class="badge">Sí</span>
+        <img src="assets/logo-holaamigo.png" style="max-height: 48px; filter: brightness(0) invert(1);" alt=""/>
+      </div>
+      <div class="usage-cell no" style="background: #FFEFEC; border: 1px solid #FFD0C9;">
+        <span class="badge">No</span>
+        <img src="assets/logo-holaamigo.png" style="max-height: 48px; transform: rotate(-12deg) scale(0.8); filter: hue-rotate(180deg);" alt=""/>
+      </div>
+      <div class="usage-cell no" style="background: linear-gradient(45deg, #ff0080, #ffaa00); border: 1px solid var(--coral-400);">
+        <span class="badge">No</span>
+        <img src="assets/logo-holaamigo.png" style="max-height: 48px;" alt=""/>
+      </div>
+    </div>
+  </section>
+
+  <!-- 02 COLOR -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-eyebrow">02 · Color</div>
+      <h2>Paleta primaria.</h2>
+      <p class="lede">Violeta profundo + cian eléctrico. La primera transmite tecnología y confianza; la segunda inyecta energía conversacional y cercanía.</p>
+    </div>
+
+    <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 22px; margin: 0 0 16px;">Violeta · Primario</h3>
+    <div class="grid-4">
+      <div class="swatch">
+        <div class="chip" style="background: #6A50F7;">#6A50F7</div>
+        <div class="info"><div class="name">Violet 500</div><div class="role">Primary brand</div><div class="hex">CMYK 73 75 0 0</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #4F3AE0;">#4F3AE0</div>
+        <div class="info"><div class="name">Violet 600</div><div class="role">Primary hover</div><div class="hex">CMYK 80 78 0 0</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #251C7A;">#251C7A</div>
+        <div class="info"><div class="name">Violet 800</div><div class="role">Deep / dark mode</div><div class="hex">CMYK 95 100 0 40</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #15104A;">#15104A</div>
+        <div class="info"><div class="name">Violet 900</div><div class="role">Background dark</div><div class="hex">CMYK 100 100 30 60</div></div>
+      </div>
+    </div>
+
+    <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 22px; margin: 32px 0 16px;">Cian · Acento</h3>
+    <div class="grid-4">
+      <div class="swatch">
+        <div class="chip dark-text" style="background: #22D3EE;">#22D3EE</div>
+        <div class="info"><div class="name">Cyan 500</div><div class="role">Accent · CTA</div><div class="hex">CMYK 65 0 15 0</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip dark-text" style="background: #5CDCFF;">#5CDCFF</div>
+        <div class="info"><div class="name">Cyan 400</div><div class="role">Highlight</div><div class="hex">CMYK 55 0 5 0</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip dark-text" style="background: #A8EEFF;">#A8EEFF</div>
+        <div class="info"><div class="name">Cyan 300</div><div class="role">Soft · chips</div><div class="hex">CMYK 30 0 0 0</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip dark-text" style="background: #C7F364;">#C7F364</div>
+        <div class="info"><div class="name">Lime 400</div><div class="role">Accent secundario</div><div class="hex">CMYK 25 0 70 0</div></div>
+      </div>
+    </div>
+
+    <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 22px; margin: 32px 0 16px;">Neutros y semántica</h3>
+    <div class="grid-4">
+      <div class="swatch">
+        <div class="chip" style="background: #0E0B2B;">#0E0B2B</div>
+        <div class="info"><div class="name">Ink 900</div><div class="role">Texto principal</div><div class="hex">RGB 14 11 43</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #5A5780;">#5A5780</div>
+        <div class="info"><div class="name">Ink 500</div><div class="role">Texto secundario</div><div class="hex">RGB 90 87 128</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip dark-text" style="background: #FAFAFD; border: 1px solid var(--ink-200);">#FAFAFD</div>
+        <div class="info"><div class="name">Paper</div><div class="role">Fondo claro</div><div class="hex">RGB 250 250 253</div></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background: #FF7A6B;">#FF7A6B</div>
+        <div class="info"><div class="name">Coral 400</div><div class="role">Alerta · riesgo</div><div class="hex">RGB 255 122 107</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 TYPE -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-eyebrow">03 · Tipografía</div>
+      <h2>Red Hat Display + Poppins.</h2>
+      <p class="lede">Display para titulares con personalidad geométrica; Poppins para texto corrido por su legibilidad y carácter cercano. Texto base siempre a 16px.</p>
+    </div>
+
+    <div class="card" style="padding: 48px;">
+      <div class="type-spec">
+        <div class="label"><b>Display 1</b>Red Hat Display · 88/96 · 900</div>
+        <div class="sample" style="font-family: var(--font-display); font-weight: 900; font-size: 88px; line-height: 1.0; letter-spacing: -0.03em;">Hola, Amigo.</div>
+      </div>
+      <div class="type-spec">
+        <div class="label"><b>Display 2</b>Red Hat Display · 56/60 · 800</div>
+        <div class="sample" style="font-family: var(--font-display); font-weight: 800; font-size: 56px; line-height: 1.05; letter-spacing: -0.02em;">Tu aliado IA.</div>
+      </div>
+      <div class="type-spec">
+        <div class="label"><b>Heading</b>Red Hat Display · 26/32 · 700</div>
+        <div class="sample" style="font-family: var(--font-display); font-weight: 700; font-size: 26px; line-height: 1.2;">Automatización conversacional</div>
+      </div>
+      <div class="type-spec">
+        <div class="label"><b>Subhead</b>Poppins · 20/30 · 400</div>
+        <div class="sample" style="font-family: var(--font-body); font-size: 20px; line-height: 1.5; color: var(--ink-500);">Una plataforma que simplifica la automatización de la comunicación.</div>
+      </div>
+      <div class="type-spec">
+        <div class="label"><b>Body · base</b>Poppins · 16/24 · 400</div>
+        <div class="sample" style="font-family: var(--font-body); font-size: 16px; line-height: 1.5;">El texto base del sistema siempre se renderiza a 16px. Es el tamaño mínimo legal para texto corrido en cualquier soporte digital — slides, web, email, in-app.</div>
+      </div>
+      <div class="type-spec">
+        <div class="label"><b>Eyebrow</b>Poppins · 16 · 600 · 0.14em · MAYÚSCULAS</div>
+        <div class="sample" style="font-family: var(--font-body); font-weight: 600; font-size: 16px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--violet-600);">Sistema de diseño</div>
+      </div>
+      <div class="type-spec">
+        <div class="label"><b>Mono</b>JetBrains Mono · 16 · 500</div>
+        <div class="sample" style="font-family: var(--font-mono); font-size: 16px; font-weight: 500;">#6A50F7 · violet-500</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 04 TOKENS -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-eyebrow">04 · Tokens</div>
+      <h2>Espaciado, radios, sombras.</h2>
+      <p class="lede">Sistema de tokens consistente para mantener ritmo y jerarquía a través de todos los puntos de contacto.</p>
+    </div>
+
+    <div class="grid-2">
+      <div class="card">
+        <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 20px; margin: 0 0 16px;">Radii</h3>
+        <table>
+          <thead><tr><th>Token</th><th>Valor</th><th>Uso</th></tr></thead>
+          <tbody>
+            <tr><td class="token">--radius-sm</td><td>10px</td><td>Chips, tags</td></tr>
+            <tr><td class="token">--radius</td><td>18px</td><td>Cards pequeñas, botones</td></tr>
+            <tr><td class="token">--radius-lg</td><td>28px</td><td>Cards grandes, paneles</td></tr>
+            <tr><td class="token">--radius-xl</td><td>44px</td><td>Hero, contenedores</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 20px; margin: 0 0 16px;">Sombras</h3>
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          <div style="background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 2px 8px rgba(37,28,122,0.06), 0 1px 2px rgba(37,28,122,0.04); font-family: var(--font-mono); font-size: 16px;">--shadow-sm</div>
+          <div style="background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 16px 40px -12px rgba(79,58,224,0.18), 0 4px 12px rgba(37,28,122,0.06); font-family: var(--font-mono); font-size: 16px;">--shadow</div>
+          <div style="background: #fff; border-radius: 18px; padding: 18px; box-shadow: 0 40px 80px -20px rgba(79,58,224,0.30), 0 10px 20px rgba(37,28,122,0.08); font-family: var(--font-mono); font-size: 16px;">--shadow-lg</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 05 COMPONENTS -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-eyebrow">05 · Componentes</div>
+      <h2>Componentes clave.</h2>
+      <p class="lede">Burbujas de chat, botones y píldoras forman el lenguaje visual recurrente de la plataforma.</p>
+    </div>
+
+    <div class="preview-panel">
+      <div style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--cyan-300); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 24px;">Conversación</div>
+
+      <div style="display: flex; flex-direction: column; gap: 12px; margin-bottom: 40px;">
+        <div class="bubble-bot">¡Hola! Soy tu Amigo. ¿En qué te ayudo hoy?</div>
+        <div class="bubble-user">Necesito tipificar 10 clientes nuevos</div>
+        <div class="bubble-bot">Perfecto. Mándame las fotos por aquí 📸</div>
+      </div>
+
+      <div style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--cyan-300); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 16px;">Botones</div>
+      <div style="display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 32px;">
+        <button class="btn-primary">Agendar demo</button>
+        <button class="btn-secondary">Ver caso de uso</button>
+        <button class="btn-ghost">Saber más</button>
+      </div>
+
+      <div style="font-family: var(--font-display); font-weight: 700; font-size: 18px; color: var(--cyan-300); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 16px;">Tags / píldoras</div>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+        <span class="pill-light">Segmentación</span>
+        <span class="pill-light">WhatsApp</span>
+        <span class="pill-light">Doble propósito</span>
+        <span class="pill-light">Tipología</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- 06 VOICE -->
+  <section class="section">
+    <div class="section-head">
+      <div class="section-eyebrow">06 · Voz y tono</div>
+      <h2>Cómo hablamos.</h2>
+      <p class="lede">El nombre lo dice todo: somos un amigo. Cercano, claro, útil. Nunca robótico, nunca distante. Hablamos en español neutro, con calidez latinoamericana.</p>
+    </div>
+
+    <div class="voice-row">
+      <div class="voice-card do">
+        <div class="tag">Sí</div>
+        <p>"¡Hola! ¿Te ayudo a clasificar este cliente?"</p>
+      </div>
+      <div class="voice-card dont">
+        <div class="tag">No</div>
+        <p>"Sistema iniciado. Ingrese parámetros para clasificación de cliente."</p>
+      </div>
+    </div>
+    <div class="voice-row">
+      <div class="voice-card do">
+        <div class="tag">Sí</div>
+        <p>"Tu Amigo redujo el tiempo de tipificación 70%."</p>
+      </div>
+      <div class="voice-card dont">
+        <div class="tag">No</div>
+        <p>"La solución implementada genera una reducción del 70% en el KPI de tipificación."</p>
+      </div>
+    </div>
+    <div class="voice-row">
+      <div class="voice-card do">
+        <div class="tag">Sí</div>
+        <p>"Mándame una foto y te respondo en segundos."</p>
+      </div>
+      <div class="voice-card dont">
+        <div class="tag">No</div>
+        <p>"Por favor proceda a adjuntar imagen para procesamiento automatizado."</p>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top: 32px;">
+      <h3 style="font-family: var(--font-display); font-weight: 700; font-size: 20px; margin: 0 0 16px;">Atributos de marca</h3>
+      <div style="display: flex; flex-wrap: wrap; gap: 8px;">
+        <span style="background: var(--violet-50); color: var(--violet-700); padding: 8px 14px; border-radius: 999px; font-size: 16px; font-weight: 500;">Amigable</span>
+        <span style="background: var(--violet-50); color: var(--violet-700); padding: 8px 14px; border-radius: 999px; font-size: 16px; font-weight: 500;">Cercano</span>
+        <span style="background: var(--violet-50); color: var(--violet-700); padding: 8px 14px; border-radius: 999px; font-size: 16px; font-weight: 500;">Poderoso</span>
+        <span style="background: var(--violet-50); color: var(--violet-700); padding: 8px 14px; border-radius: 999px; font-size: 16px; font-weight: 500;">Claro</span>
+        <span style="background: var(--violet-50); color: var(--violet-700); padding: 8px 14px; border-radius: 999px; font-size: 16px; font-weight: 500;">Estratégico</span>
+        <span style="background: var(--violet-50); color: var(--violet-700); padding: 8px 14px; border-radius: 999px; font-size: 16px; font-weight: 500;">Conversacional</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- NOTA -->
+  <section class="section">
+    <div class="card" style="background: linear-gradient(155deg, var(--violet-50), #fff); padding: 40px;">
+      <div style="font-family: var(--font-display); font-weight: 700; font-size: 16px; color: var(--violet-600); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 12px;">Nota sobre la fuente</div>
+      <p style="margin: 0; font-size: 16px; color: var(--ink-700); max-width: 760px; line-height: 1.6;">
+        Este brand book ha sido reconstruido a partir de los assets oficiales de la presentación
+        <i>HA_Hola amigo base</i> (logo, mascota, paleta, tipografías embebidas y lenguaje visual).
+        El sitio <b>holaamigo.ai</b> es una SPA y no expone su brand book directamente — recomendamos
+        confirmar valores exactos de CMYK / Pantone con el equipo de marca antes de aplicar a impresión.
+      </p>
+    </div>
+  </section>
+
+  <div class="footer">
+    Hola Amigo · Brand Book v1.0 · Abril 2026
+  </div>
+
+</div>
+</body>
+</html>

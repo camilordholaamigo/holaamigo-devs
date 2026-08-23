@@ -2,6 +2,10 @@ import Link from 'next/link';
 import { db } from '@/lib/supabase/admin';
 import { Card, Badge, SectionTitle, Stat, Empty } from '@/components/ui';
 import { CrearPrueba, EditarCanal } from '@/components/pruebas-admin';
+import { CrearLote, type OrgConLinea } from '@/components/lote-admin';
+import { EnviarInforme } from '@/components/informe-admin';
+import { lotesRecientes } from '@/lib/pruebas/lote';
+import { informesRecientes } from '@/lib/pruebas/informe';
 import { canalActivo, faltaParaEnviar } from '@/lib/pruebas/callbell';
 import { plantillasActivas } from '@/lib/pruebas/compilar';
 import { formatoDuracion } from '@/lib/pruebas/motor';
@@ -39,6 +43,14 @@ interface FilaResumen {
   evaluacion_promedio: number | null;
 }
 
+interface LineaCruda {
+  organization_id: string | null;
+  phone_e164: string;
+  nombre: string | null;
+  ultima_prueba_at: string | null;
+  organizations: { name: string | null; domain: string | null } | null;
+}
+
 interface FilaPrueba {
   id: string;
   template_id: string;
@@ -62,8 +74,16 @@ export default async function PruebasPage() {
   // del reloj no es idempotente — y el ayudante ya existe.
   const desde = isoDaysAgo(30);
 
-  const [{ data: resumen }, { data: pruebas }, canal, plantillas, { data: canales }] =
-    await Promise.all([
+  const [
+    { data: resumen },
+    { data: pruebas },
+    canal,
+    plantillas,
+    { data: canales },
+    lotes,
+    informes,
+    { data: lineas },
+  ] = await Promise.all([
       db().rpc('resumen_de_pruebas', { p_desde: desde }),
       db()
         .from('smoke_probes')
@@ -80,11 +100,38 @@ export default async function PruebasPage() {
         .from('smoke_channels')
         .select('id, label, provider, phone_e164, channel_uuid, template_uuid, activo, notas')
         .order('created_at'),
+      lotesRecientes(8),
+      informesRecientes(12),
+      // Las organizaciones que ya tienen una línea conocida. Es lo que hace
+      // usable el lote de QA: se eligen de una lista en vez de pegar treinta
+      // teléfonos. Los números salen de donde el research los dejó.
+      db()
+        .from('smoke_targets')
+        .select('organization_id, phone_e164, nombre, ultima_prueba_at, confianza, organizations ( name, domain )')
+        .eq('bloqueado', false)
+        .not('organization_id', 'is', null)
+        .order('confianza', { ascending: false })
+        .limit(300),
     ]);
 
   const filas = (resumen ?? []) as FilaResumen[];
   const lista = (pruebas ?? []) as unknown as FilaPrueba[];
   const falta = Object.keys(faltaParaEnviar());
+
+  // Una línea por organización: la de mayor confianza, que es el orden en que
+  // vienen. Probar las tres líneas de treinta clientes son noventa
+  // conversaciones, y el lote de QA quiere cobertura amplia, no profundidad.
+  const porOrg = new Map<string, OrgConLinea>();
+  for (const l of (lineas ?? []) as unknown as LineaCruda[]) {
+    if (!l.organization_id || porOrg.has(l.organization_id)) continue;
+    porOrg.set(l.organization_id, {
+      id: l.organization_id,
+      nombre: l.organizations?.name ?? l.organizations?.domain ?? l.nombre ?? l.phone_e164,
+      telefono: l.phone_e164,
+      ultima_prueba_at: l.ultima_prueba_at,
+    });
+  }
+  const organizaciones = [...porOrg.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
 
   const enviadas = filas.reduce((s, f) => s + Number(f.enviadas), 0);
   const contestaron = filas.reduce((s, f) => s + Number(f.contestaron), 0);
@@ -242,7 +289,117 @@ export default async function PruebasPage() {
         )}
       </section>
 
-      {/* ── 3 · configuración ────────────────────────────────────────────── */}
+      {/* ── 3 · las tandas ───────────────────────────────────────────────
+          Va antes de la configuración porque es la acción, no el ajuste. Quien
+          entra a esta pantalla casi siempre viene a lanzar algo o a mirar cómo
+          va lo que lanzó. */}
+      <section className="space-y-5">
+        <div>
+          <h2 className="text-[17px] font-semibold tracking-tight text-ink">Tandas</h2>
+          <p className="mt-1 text-[13px] text-ink-faint">
+            La misma batería contra muchas líneas, con tope de concurrencia. Es la
+            herramienta de QA para nuestros clientes y la de prospección, con el
+            mismo motor y distintos frenos.
+          </p>
+        </div>
+
+        <div className="grid gap-5 lg:grid-cols-2">
+          <CrearLote plantillas={plantillas} organizaciones={organizaciones} />
+
+          <div className="space-y-2.5">
+            {lotes.length === 0 ? (
+              <Empty
+                title="Todavía no hay ninguna tanda."
+                hint="La primera puede ser una sola línea: sirve igual para ver cómo se comporta."
+              />
+            ) : (
+              lotes.map((l) => (
+                <Link key={l.id} href={`/admin/pruebas/lotes/${l.id}`} className="block">
+                  <Card className="transition hover:border-line-strong">
+                    <div className="flex flex-wrap items-center gap-x-5 gap-y-2 px-5 py-4">
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[14px] font-medium text-ink">{l.nombre}</p>
+                        <p className="tnum text-[12px] text-ink-faint">
+                          {l.proposito === 'qa' ? 'QA de clientes' : 'prospección'} · máximo{' '}
+                          {l.max_concurrentes} a la vez
+                        </p>
+                      </div>
+                      <Badge tone={l.estado === 'running' ? 'neutral' : 'muted'}>{l.estado}</Badge>
+                    </div>
+                  </Card>
+                </Link>
+              ))
+            )}
+          </div>
+        </div>
+      </section>
+
+      {/* ── 4 · los informes ─────────────────────────────────────────────── */}
+      <section className="space-y-5">
+        <div>
+          <h2 className="text-[17px] font-semibold tracking-tight text-ink">Informes</h2>
+          <p className="mt-1 text-[13px] text-ink-faint">
+            El enlace público que se le manda al cliente. <strong>Que lo hayan
+            abierto</strong> es la señal de compra más barata que tenemos, y es la
+            columna que decide a quién llamar.
+          </p>
+        </div>
+
+        {informes.length === 0 ? (
+          <Empty
+            title="Todavía no hay informes."
+            hint="Se generan desde la pantalla de una tanda, cuando ya hay conversaciones cerradas."
+          />
+        ) : (
+          <div className="space-y-2.5">
+            {informes.map((i) => (
+              <Card key={i.id}>
+                <div className="space-y-3 px-5 py-4">
+                  <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[14px] font-medium text-ink">
+                        {i.organizations?.name ?? i.organizations?.domain ?? 'sin nombre'}
+                      </p>
+                      <p className="tnum text-[12px] text-ink-faint">
+                        {i.resumen.conversaciones} conversaciones ·{' '}
+                        {i.resumen.sin_respuesta > 0
+                          ? `${i.resumen.sin_respuesta} sin respuesta`
+                          : 'todas contestaron'}{' '}
+                        · {i.hallazgos.length} hallazgos
+                      </p>
+                    </div>
+                    {i.vistas > 0 ? (
+                      <Badge tone="money">
+                        abierto {i.vistas} {i.vistas === 1 ? 'vez' : 'veces'}
+                      </Badge>
+                    ) : (
+                      <Badge tone="muted">sin abrir</Badge>
+                    )}
+                    <a
+                      href={`${env.siteUrl}/informe/${i.share_token}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="shrink-0 text-[13px] font-medium text-ink underline underline-offset-2"
+                    >
+                      Ver
+                    </a>
+                  </div>
+
+                  <EnviarInforme
+                    informeId={i.id}
+                    correoPorDefecto={null}
+                    asunto={i.correo?.asunto ?? null}
+                    cuerpo={i.correo?.cuerpo ?? null}
+                    url={`${env.siteUrl}/informe/${i.share_token}`}
+                  />
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── 5 · configuración ────────────────────────────────────────────── */}
       <section className="space-y-5">
         <div>
           <h2 className="text-[17px] font-semibold tracking-tight text-ink">Configuración</h2>

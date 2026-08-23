@@ -251,6 +251,8 @@ export interface TargetRow {
 export interface PruebaRow {
   id: string;
   run_id: string;
+  /** Null si la prueba se disparó suelta y no dentro de un lote. */
+  batch_id: string | null;
   target_id: string;
   template_id: string;
   channel_id: string;

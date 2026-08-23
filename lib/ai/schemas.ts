@@ -747,3 +747,68 @@ export const EvaluacionPruebaSchema = z.object({
     ),
 });
 export type EvaluacionPrueba = z.infer<typeof EvaluacionPruebaSchema>;
+
+/**
+ * El informe compartible: lo que el modelo aporta es LENGUAJE.
+ *
+ * Las cifras —cuántas conversaciones, en cuántas falló cada criterio, cuántos
+ * minutos tardaron— las calcula `holaamigo.salud_de_linea()` y
+ * `holaamigo.hallazgos_por_frecuencia()` en SQL, y llegan acá ya resueltas
+ * dentro del input. El modelo las LEE para escribir alrededor de ellas; no las
+ * produce. Igual que en el resto del smoke tester, sin un solo `z.number()`.
+ *
+ * `correo` es un BORRADOR. No se manda solo: lo revisa una persona en
+ * /admin/pruebas, misma disciplina que las señales de upsell (ADR 0021). Un
+ * correo automático a un prospecto que dice que su equipo contesta mal es
+ * exactamente el tipo de mensaje que hay que leer antes de mandar.
+ */
+export const InformeLenguajeSchema = z.object({
+  narrativa: z
+    .string()
+    .describe(
+      'Dos o tres frases para el dueño del negocio, en segunda persona y sin una sola cifra. Dice qué pasó y por qué importa. Las cifras las pinta la pantalla al lado.',
+    ),
+  recomendaciones: z
+    .array(
+      z.object({
+        clave: z.string().describe('El identificador del hallazgo que se está atendiendo.'),
+        titulo: z.string().describe('Qué hacer. Imperativo, máximo 10 palabras.'),
+        porque: z
+          .string()
+          .describe(
+            'Por qué mueve la aguja en ESTE negocio. Una o dos frases. Sin cifras: las pone el código.',
+          ),
+      }),
+    )
+    .describe('Una por hallazgo recibido, en el mismo orden, sin inventar ninguna.'),
+  correo: z.object({
+    asunto: z
+      .string()
+      .describe('Máximo 60 caracteres. Concreto y sin signos de admiración. Sin cifras.'),
+    cuerpo: z
+      .string()
+      .describe(
+        'Cuatro a seis frases. Abre con lo que pasó, no con quiénes somos. Cierra invitando a ver el informe. Usa {{link}} donde va el enlace. Sin cifras y sin markdown.',
+      ),
+  }),
+});
+export type InformeLenguaje = z.infer<typeof InformeLenguajeSchema>;
+
+/** Camino degradado: sin esto el informe igual se arma, con las cifras solas. */
+export const InformeLenguajeMinimalSchema = z.object({
+  narrativa: z.string(),
+});
+
+export function inflarInformeLenguaje(
+  min: z.infer<typeof InformeLenguajeMinimalSchema>,
+): InformeLenguaje {
+  return {
+    narrativa: min.narrativa,
+    recomendaciones: [],
+    correo: {
+      asunto: 'Le escribimos a tu WhatsApp',
+      cuerpo:
+        'Le escribimos a tu línea como lo haría un cliente y guardamos lo que pasó. El detalle está acá: {{link}}',
+    },
+  };
+}

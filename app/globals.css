@@ -188,7 +188,10 @@ input[type="range"]::-moz-range-thumb {
 @media print {
   header,
   nav,
-  .print\:hidden {
+  .print\:hidden,
+  /* Los botones de compartir no tienen sentido en papel, y ocupan el lugar
+     donde debería empezar el contenido. Ver components/informe-acciones.tsx */
+  .no-print {
     display: none !important;
   }
 

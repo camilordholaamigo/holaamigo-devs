@@ -666,3 +666,57 @@ Se diseñó para correr cada 5 minutos; en el plan Hobby de Vercel corre una vez
 al día. No rompe el arnés —la red real es el GET de estado que la interfaz ya
 consulta— pero sí deja colgada hasta el otro día la prueba de alguien que cerró
 la pestaña.
+
+### `GET /informe/[shareToken]` · público
+
+El informe compartible. No es una ruta de API pero se documenta acá porque es
+una superficie pública: enlace permanente, protegido por un token de 64
+caracteres no enumerable, igual que el diagnóstico.
+
+Cada apertura incrementa `smoke_reports.vistas` y emite `smoke_report_viewed`.
+Eso no es telemetría: es la señal que decide a quién llamar.
+
+### `POST /api/admin/pruebas/lotes`
+
+Arrancar una tanda. Solo admin.
+
+```jsonc
+{ "nombre": "QA de septiembre",
+  "proposito": "qa",              // gobierna qué frenos aplican
+  "plantillas": ["servicio"],
+  "organizationIds": ["<uuid>"],  // los números salen de smoke_targets
+  "objetivos": [{ "telefono": "+57300…" }],   // …o a mano; se deduplica
+  "maxConcurrentes": 4,           // 1–12. NO es afinación: ver ADR 0026
+  "ritmoSegundos": 45 }
+
+→ { "ok": true, "loteId": "<uuid>", "pruebas": 30,
+    "omitidos": [{ "telefono": "+57…", "motivo": "pidió que no le escribiéramos" }] }
+```
+
+`omitidos` viene **siempre**, también en el 400. Un lote que dice «no se pudo»
+sin decir qué pasó con cada línea es un lote que nadie vuelve a usar.
+
+### `GET /api/admin/pruebas/lotes/[loteId]` · `PATCH`
+
+El GET devuelve `{ lote, estado, pruebas }` y **empuja la cola** en `after()`.
+Mientras alguien tiene la pantalla abierta, esto es el motor del lote.
+
+El PATCH acepta `{ accion: "pausar" | "reanudar" | "cancelar" }`. Cancelar mata
+lo pendiente y **deja terminar lo que ya está conversando**: del otro lado hay
+una persona que quedaría hablando sola.
+
+### `POST /api/admin/pruebas/informes` · `PATCH`
+
+```jsonc
+// POST — para una organización o para todas las de un lote
+{ "loteId": "<uuid>", "dias": 30 }
+→ { "ok": true, "generados": 28, "informes": [{ "organizationId", "informeId", "url" }],
+    "vacios": ["<uuid>"] }   // sin conversaciones todavía: no es un error
+
+// PATCH
+{ "informeId": "<uuid>", "accion": "despublicar" }
+{ "informeId": "<uuid>", "accion": "enviar", "para": "opcional@cliente.co" }
+```
+
+El envío sale por **Resend**, no por SendGrid (ADR 0008), y lo dispara una
+persona: el sistema redacta, un humano decide qué sale del edificio.

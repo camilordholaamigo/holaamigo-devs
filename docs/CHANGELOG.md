@@ -8,6 +8,116 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.9.0] — 2026-08-23 · El lote y el informe
+
+La 3.8.0 dejó el motor: le escribimos a **una** línea. Eso resuelve un
+prospecto y no resuelve las dos cosas que el producto tiene que hacer:
+
+**QA** — «¿a cuál de mis treinta clientes se le rompió la IA esta semana?».
+**Growth** — «mandale a este prospecto lo que pasó cuando le escribimos».
+
+Son el mismo motor con distinto destinatario. Ahora hay una **tanda** que corre
+muchas líneas con freno, y un **informe** público que convierte lo que pasó en
+algo que se manda por WhatsApp y cuyas aperturas se cuentan.
+
+Ver [ADR 0026](adr/0026-el-lote-y-el-informe.md), [wiki/24](wiki/24-lotes-e-informes.md)
+y el contrato del subsistema en [`docs/api/pruebas.md`](api/pruebas.md).
+
+### Agregado
+
+- **El lote** (`lib/pruebas/lote.ts`, `holaamigo.smoke_batches`). La misma
+  batería contra N líneas, con `max_concurrentes` (4, techo 12) y
+  `ritmo_segundos` (45). **Eso no es afinación:** treinta clientes por tres
+  pruebas son noventa conversaciones desde una sola línea de WhatsApp, y para
+  el clasificador de Meta eso es un emisor de spam. Lo que se pierde no es la
+  tanda, es el número. Son columnas y no constantes para poder bajarlas en
+  caliente.
+
+- **`avanzarLote()`**, idempotente, empujado por tres cosas: la creación, el
+  cierre de cada prueba, y la pantalla del admin mientras alguien la mira. Es el
+  único lugar del subsistema donde se duerme, acotado a 200 s — y ahí es
+  correcto: no esperamos un evento externo, espaciamos nuestros propios envíos.
+
+- **Omitir en vez de fallar.** Si una compilación falla, ese par sale de la
+  tanda con su motivo y el resto sigue. Un lote de treinta que muere en el
+  cuarto no sirve. Los motivos se muestran uno por uno.
+
+- **El informe** (`lib/pruebas/informe.ts`, `holaamigo.smoke_reports`) con
+  `share_token` público. Las cifras salen de `salud_de_linea()`, los hallazgos
+  de `hallazgos_por_frecuencia()`, las citas de `citas_del_periodo()`, y **qué
+  recomendar lo decide un catálogo que vive en el repositorio**. El modelo pone
+  las palabras y su esquema no tiene un `z.number()`.
+
+- **La frecuencia se cuenta sobre los `id` de la rúbrica, no sobre el texto del
+  modelo.** «Falló en 4 de 5» es un problema del guion; «1 de 5» es una
+  conversación mala, y esa distinción es todo el valor del análisis. Solo
+  funciona con claves estables: las alucinaciones son texto libre y van aparte,
+  **textuales y sin contar**, porque una cita resumida deja de ser prueba.
+  Un criterio con `paso = null` **no cuenta como fallo**: es «no se pudo
+  verificar», y reprobar a alguien porque nosotros no pudimos leer su sitio es
+  la forma más rápida de que el informe pierda credibilidad.
+
+- **`/informe/[shareToken]`** — público, imprimible, con barras de tiempo
+  lineales (la astilla de la conversación rápida al lado de la de 40 minutos
+  **es** la información) y los puntitos de frecuencia, que se entienden sin
+  leer. El titular lo escribe el código, no el modelo: parece prosa y contiene
+  cifras.
+
+- **Compartir: un link, no un PDF adjunto.** Se previsualiza, no pesa, y —lo que
+  decide— **se puede medir**. `vistas` y `visto_at` no son telemetría: saber que
+  el prospecto lo abrió tres veces es la señal de compra más barata que tenemos.
+  El PDF sigue existiendo vía `window.print()`.
+
+- **El correo del informe**, redactado por el modelo y **enviado por una
+  persona** desde `/admin/pruebas` (misma disciplina que ADR 0021). Sale por
+  **Resend y no por SendGrid**: SendGrid es el motor de las campañas de los
+  clientes y su reputación está atada a lo que ellos envían (ADR 0008).
+
+- **Cuatro funciones SQL** — `salud_de_linea`, `hallazgos_por_frecuencia`,
+  `citas_del_periodo`, `estado_del_lote` — con sus 35 chequeos en
+  `scripts/test-lotes-e-informes.mjs`, que verifica la aritmética y no solo que
+  las tablas existan.
+
+- **`docs/api/pruebas.md`** — el contrato módulo por módulo del subsistema:
+  qué recibe cada función, qué escribe en la base, qué lanza, cuál es la
+  invariante que no se puede romper, y **las seis costuras** a reemplazar para
+  portarlo a otra aplicación.
+
+### Arreglado
+
+- **`cancelarVivasContra()` se cancelaba a sí misma.** `crearLote` inserta N
+  pruebas en `pending` y acto seguido cancelaba todo lo pendiente contra esos
+  números — incluidas las que acababa de crear. El síntoma habría sido «el lote
+  se crea y muere en el acto», sin error. Ahora acepta `exceptoRunId`.
+
+- **`avanzarCola()` dormía 90 segundos.** Rompía tres cosas: el GET de estado
+  (techo 60 s) moría a mitad de respuesta, el stream se quedaba mudo, y el cron
+  con cinco colas pendientes sumaba siete minutos contra un techo de cinco.
+  Ahora es una guarda: pregunta «¿cerró hace poco?» y se retira.
+
+- **El costo de modelo del smoke tester no se imputaba a nadie.**
+  `smoke_probes.organization_id` no existía, así que cada turno y cada
+  evaluación quedaban sin organización en `agent_runs`.
+
+### Para desplegarlo
+
+**1 · Supabase — una migración.**
+
+```
+0015_lotes_e_informes.sql
+```
+
+Idempotente, y falla temprano diciendo qué falta si se corre sin `0014`.
+
+**2 · Vercel — ninguna variable nueva.** El informe usa `RESEND_API_KEY`, que ya
+estaba. Sin ella el informe se genera igual y el enlace funciona: solo no se
+puede mandar el correo desde el admin, y lo dice así.
+
+**3 · Nada más.** El cron y el webhook ya existentes empujan los lotes; no hay
+rutas nuevas que registrar.
+
+---
+
 **Nota de plan: los crons van a diario.**
 
 El team `holaamigo` en Vercel está en Hobby, que topa los crons a uno por día.

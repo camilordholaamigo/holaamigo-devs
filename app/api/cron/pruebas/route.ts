@@ -9,6 +9,7 @@ import {
   recogerSiEstancada,
 } from '@/lib/pruebas/motor';
 import { evaluarCerradasSinEvaluar } from '@/lib/pruebas/evaluador';
+import { avanzarLote, cerrarLoteSiTerminó } from '@/lib/pruebas/lote';
 import { ZOMBI_MS } from '@/lib/pruebas/types';
 
 /**
@@ -71,7 +72,7 @@ export async function GET(request: Request) {
     }
   }
 
-  const reporte = { estancadas: 0, zombis: 0, colas: 0, evaluadas: 0, runs_cerrados: 0 };
+  const reporte = { estancadas: 0, zombis: 0, colas: 0, evaluadas: 0, runs_cerrados: 0, lotes: 0 };
 
   try {
     // ── A y C · pruebas vivas ────────────────────────────────────────────
@@ -139,6 +140,30 @@ export async function GET(request: Request) {
       reporte.evaluadas += await evaluarCerradasSinEvaluar(runId);
       await cerrarRunSiTerminó(runId);
       reporte.runs_cerrados += 1;
+    }
+
+    // ── E · lotes vivos ───────────────────────────────────────────────────
+    //
+    // Un lote avanza solo mientras las pruebas van cerrando: cada cierre libera
+    // un cupo y empuja el siguiente arranque desde el webhook. Si el lote se
+    // queda sin conversaciones vivas —porque todas fallaron al enviar, o porque
+    // un despliegue mató el proceso que iba a arrancar la siguiente— nadie lo
+    // vuelve a tocar. Éste es el único que lo despierta cuando no hay nadie
+    // mirando la pantalla.
+    const { data: lotesVivos } = await db()
+      .from('smoke_batches')
+      .select('id')
+      .eq('estado', 'running')
+      .limit(10);
+
+    for (const lote of lotesVivos ?? []) {
+      try {
+        const { arrancadas } = await avanzarLote(lote.id);
+        reporte.lotes += arrancadas;
+        await cerrarLoteSiTerminó(lote.id);
+      } catch (err) {
+        console.error('[cron:pruebas] no se pudo avanzar un lote', err);
+      }
     }
   } catch (err) {
     console.error('[cron:pruebas] falló', err);

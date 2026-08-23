@@ -95,14 +95,26 @@ console.log('\n\x1b[1m1 · El orden: 0014 sin 0007 tiene que fallar diciendo qu�
 console.log('\n\x1b[1m2 · Lo que 0014 tenía que dejar\x1b[0m');
 
 {
-  const { rows: tablas } = await db.query(`
-    select table_name from information_schema.tables
-    where table_schema = 'holaamigo' and table_name like 'smoke_%' order by 1`);
+  // Se verifica que estén LAS CINCO de 0014, no que sean las únicas. La
+  // primera versión comparaba contra la lista completa de tablas `smoke_%` y
+  // se rompió en cuanto 0015 agregó dos más — una prueba que falla porque el
+  // proyecto creció no está probando nada, solo pidiendo mantenimiento.
+  const esperadas = [
+    'smoke_channels',
+    'smoke_probes',
+    'smoke_runs',
+    'smoke_targets',
+    'smoke_templates',
+  ];
+  const { rows: tablas } = await db.query(
+    `select table_name from information_schema.tables
+      where table_schema = 'holaamigo' and table_name = any($1) order by 1`,
+    [esperadas],
+  );
   check(
-    'las cinco tablas',
-    tablas.map((r) => r.table_name).join(',') ===
-      'smoke_channels,smoke_probes,smoke_runs,smoke_targets,smoke_templates',
-    tablas.map((r) => r.table_name).join(','),
+    'las cinco tablas de 0014',
+    tablas.length === esperadas.length,
+    `faltan: ${esperadas.filter((t) => !tablas.some((r) => r.table_name === t)).join(', ')}`,
   );
 
   // El índice parcial sobre `awaiting_reply` es lo que mantiene la búsqueda del
