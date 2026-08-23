@@ -205,7 +205,7 @@ la prueba.
 |---|---|---|---|
 | Recolección en el GET | `/api/pruebas/estado/[runId]` y el stream | cada 2–6 s mientras alguien mira | **La real.** Corre con la frecuencia del problema. |
 | Auto-cancelación | `cancelarVivasContra()` al arrancar | cada prueba nueva | Muy confiable, solo limpia el mismo número. |
-| Cron | `/api/cron/pruebas`, cada 5 min | siempre | Recoge lo de los clientes que cerraron la pestaña. |
+| Cron | `/api/cron/pruebas`, 1×/día en Hobby | siempre | Recoge lo de los clientes que cerraron la pestaña. Ver la nota de puesta en marcha. |
 
 El cron cubre cuatro casos: estancadas, colas huérfanas, **zombis** (running sin
 actividad hace 90 min — son los que se llevan los mensajes de las siguientes) y
@@ -382,7 +382,12 @@ update holaamigo.settings
 5. **Una conversación entera, a mano.** Creá una prueba contra tu propio
    celular y contestá vos. Verificá mensaje por mensaje que la transcripción
    quede completa y que la prueba cierre sola.
-6. **El cron.** `/api/cron/pruebas` cada 5 minutos, ya está en `vercel.json`.
+6. **El cron.** `/api/cron/pruebas` ya está en `vercel.json`. Hoy corre **una
+   vez al día** (11:30 UTC) porque el plan Hobby de Vercel no permite más. El
+   arnés funciona igual: la red real es el GET de estado, que la interfaz
+   consulta cada pocos segundos. Lo que se pierde es que una prueba de alguien
+   que cerró la pestaña queda `running` hasta el otro día. Con Pro, volver a
+   su cron de cada cinco minutos es la única línea que hay que cambiar.
 
 ---
 

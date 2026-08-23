@@ -16,7 +16,7 @@ import { ZOMBI_MS } from '@/lib/pruebas/types';
  *
  * La red que recoge lo que las otras dos no ven. Las otras dos son el GET de
  * estado y el stream, que corren cada pocos segundos **mientras alguien tiene
- * la pestaña abierta**; ésta corre siempre.
+ * la pestaña abierta**; ésta corre aunque no haya nadie mirando.
  *
  * Cuatro casos, en orden de cuánto daño hacen si no se atienden:
  *
@@ -36,10 +36,27 @@ import { ZOMBI_MS } from '@/lib/pruebas/types';
  *       por lo tanto no corrió el disparo automático— que se quedaron sin
  *       evaluación.
  *
- * La lección que hay detrás de que esto corra cada cinco minutos y no una vez
- * al día: **la red de seguridad tiene que correr con la frecuencia del
- * problema**. Una conversación dura veinte minutos; un cron diario no rescata
- * nada, solo limpia cadáveres al otro día.
+ * ── POR QUÉ HOY CORRE UNA VEZ AL DÍA, Y POR QUÉ IGUAL FUNCIONA ─────────────
+ *
+ * La lección del paquete de Rentmies es que **la red de seguridad tiene que
+ * correr con la frecuencia del problema**: una conversación dura veinte
+ * minutos, y un cron diario no rescata nada — limpia cadáveres al otro día.
+ *
+ * El plan Hobby de Vercel topa los crons a uno diario, así que esta ruta corre
+ * a las 11:30 UTC y no cada cinco minutos. El smoke tester sobrevive a eso
+ * porque la red REAL nunca fue este cron: es el GET de estado y el stream, que
+ * la interfaz ya consulta cada pocos segundos y que cierran las pruebas
+ * estancadas en el momento. Eso se diseñó así a propósito, antes de saber en
+ * qué plan íbamos a estar.
+ *
+ * Lo que sí se pierde con el cron diario: una prueba de un cliente que cerró
+ * la pestaña se queda `running` hasta el otro día. No corrompe nada —la
+ * correlación es por número, así que no se lleva los mensajes de las
+ * siguientes— pero ensucia el conteo de `resumen_de_pruebas` durante unas
+ * horas.
+ *
+ * Con un plan Pro, devolverle a esta ruta su cron de cada cinco minutos en
+ * `vercel.json` es la única línea que hay que cambiar.
  */
 
 export const runtime = 'nodejs';

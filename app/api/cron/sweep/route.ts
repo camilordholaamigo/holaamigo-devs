@@ -14,7 +14,7 @@ import { track } from '@/lib/events';
  * pasa, un `research_run` queda en `running` para siempre y el usuario ve una
  * barra de progreso que nunca avanza.
  *
- * Este cron es el seguro. Cada 2 minutos:
+ * Este cron es el seguro. Cada corrida:
  *   1. Reintenta corridas atascadas (máx. 2 intentos) o las marca `partial`.
  *   2. Recalcula la salud de los agentes (§9.4).
  *   3. Marca como abandonadas las sesiones muertas y registra los regresos.
@@ -22,6 +22,13 @@ import { track } from '@/lib/events';
  * Protegido con CRON_SECRET. Vercel manda el header `authorization` con el
  * valor de la variable; sin ella la ruta queda abierta y cualquiera puede
  * disparar reintentos.
+ *
+ * OJO CON LA FRECUENCIA: se diseñó para correr cada 2 minutos y hoy corre una
+ * vez al día, porque el plan Hobby de Vercel no permite más. La diferencia es
+ * real y le pega al cliente: un research que se cuelga —la función murió a
+ * mitad, hubo un despliegue en el medio— se queda colgado hasta el otro día, y
+ * el cliente ve un diagnóstico que nunca carga. Es la primera razón para pasar
+ * a Pro, y el arreglo es una línea en `vercel.json`.
  */
 
 export const runtime = 'nodejs';
@@ -91,10 +98,13 @@ export async function GET(request: Request) {
 
     // ── 2b · Tarjetas vencidas (P2) ───────────────────────────────────────
     //
-    // Cada 2 minutos y no una vez al día: el SLA más corto es de 4 horas
-    // (pausar una campaña que está perdiendo plata), y ese tipo se aprueba solo
-    // porque no hacerlo es el daño. Revisar una vez al día lo convertiría en un
-    // SLA de 24 h con letra chica.
+    // Esto se escribió para correr cada 2 minutos: el SLA más corto es de 4
+    // horas (pausar una campaña que está perdiendo plata), y ese tipo se
+    // aprueba solo porque no hacerlo ES el daño.
+    //
+    // En Hobby el cron corre una vez al día, así que hoy ese SLA de 4 h es en
+    // la práctica uno de 24 h con letra chica. Está dicho acá y en el
+    // CHANGELOG para que nadie lo descubra el día que importe.
     const vencimientos = await expirarAprobaciones();
     report.aprobaciones_vencidas = vencimientos.rechazadas;
     report.aprobaciones_por_silencio = vencimientos.aprobadas;

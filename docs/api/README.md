@@ -659,5 +659,10 @@ una pista accionable. Es el paso que no hay que saltarse al configurar.
 
 ### `GET /api/cron/pruebas`
 
-El watchdog, cada 5 minutos. Cierra estancadas y zombis, despierta colas
-huérfanas y califica lo que quedó sin nota. Protegido con `CRON_SECRET`.
+El watchdog. Cierra estancadas y zombis, despierta colas huérfanas y califica
+lo que quedó sin nota. Protegido con `CRON_SECRET`.
+
+Se diseñó para correr cada 5 minutos; en el plan Hobby de Vercel corre una vez
+al día. No rompe el arnés —la red real es el GET de estado que la interfaz ya
+consulta— pero sí deja colgada hasta el otro día la prueba de alguien que cerró
+la pestaña.

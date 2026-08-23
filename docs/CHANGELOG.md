@@ -8,6 +8,23 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+**Nota de plan: los crons van a diario.**
+
+El team `holaamigo` en Vercel está en Hobby, que topa los crons a uno por día.
+`sweep`, `dispatch` y `pruebas` estaban cada 2 y cada 5 minutos y pasaron a
+diarios. Lo que eso cuesta, en orden de gravedad:
+
+| Cron | Diseñado | Hoy | Qué se pierde |
+|---|---|---|---|
+| `/api/cron/sweep` | 2 min | 11:00 UTC | Un research que se cuelga se queda colgado hasta el otro día, y el cliente ve un diagnóstico que nunca carga. **Es la razón número uno para pasar a Pro.** |
+| `/api/cron/dispatch` | 5 min | 13:30 UTC | Un cliente cuya franja de envío no incluya las 8:30 a. m. de Colombia no recibe envíos ese día. La hora **no es libre**: el briefing del President solo se publica entre las 12 y las 14 UTC, así que el cron tiene que caer adentro de esa franja o el President no habla nunca. |
+| `/api/cron/pruebas` | 5 min | 11:30 UTC | Casi nada. La red real del smoke tester nunca fue este cron: es el GET de estado que la interfaz consulta cada pocos segundos. Solo queda `running` hasta el otro día la prueba de alguien que cerró la pestaña. |
+
+Volver atrás en un plan Pro es cambiar tres líneas de `vercel.json`. Está
+anotado en el encabezado de cada una de las tres rutas.
+
+---
+
 ## [3.8.0] — 2026-08-23 · Le escribimos a su línea antes de venderle nada
 
 El diagnóstico era bueno y era, de punta a punta, una **proyección**. Las cuatro

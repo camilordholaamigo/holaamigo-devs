@@ -6,7 +6,7 @@ import { runDailyBriefing } from '@/lib/feed/president';
 import { agentConfigFor, withinSendWindow, type SalesConfig } from '@/lib/agents/config';
 
 /**
- * GET /api/cron/dispatch — el motor del correo, cada 5 minutos.
+ * GET /api/cron/dispatch — el motor del correo.
  *
  * Hace tres cosas, en este orden y por una razón:
  *   1. Activa las campañas cuya hora ya llegó.
@@ -17,6 +17,22 @@ import { agentConfigFor, withinSendWindow, type SalesConfig } from '@/lib/agents
  * números de ayer teniendo los de hoy a medio hacer.
  *
  * Protegido con CRON_SECRET, igual que `/api/cron/sweep`.
+ *
+ * ── LA HORA A LA QUE CORRE NO ES LIBRE ─────────────────────────────────────
+ *
+ * Se diseñó para correr cada 5 minutos. En el plan Hobby corre UNA vez al día,
+ * y eso convierte el horario en parte de la lógica:
+ *
+ *  · El briefing del paso 3 solo se publica entre las 12 y las 14 UTC. Con un
+ *    cron diario fuera de esa franja, el President simplemente no habla nunca.
+ *    Está agendado a las 13:30 UTC por eso, no por gusto.
+ *  · El paso 2 respeta la franja de envío de cada cliente. Con una sola
+ *    corrida diaria, un cliente cuya franja no incluya las 8:30 a. m. de
+ *    Colombia **no recibe envíos ese día**. Corriendo cada cinco minutos eso
+ *    no podía pasar.
+ *
+ * Las dos cosas se arreglan devolviéndole el cron de cada cinco minutos en un
+ * plan Pro.
  */
 
 export const runtime = 'nodejs';
@@ -91,7 +107,9 @@ export async function GET(request: Request) {
 
     // ── 3 · Briefing diario del President ─────────────────────────────────
     // La deduplicación por día vive en `feed_items.dedupe_key`, así que correr
-    // esto cada 5 minutos es inofensivo: solo el primero del día publica.
+    // esto muchas veces es inofensivo: solo el primero del día publica. La
+    // ventana 12–14 UTC es lo que hace que el cron diario TENGA que estar
+    // agendado adentro de ella; ver el encabezado.
     const hour = new Date().getUTCHours();
     if (hour >= 12 && hour <= 14) {
       const { data: activeOrgs } = await db()
