@@ -30,5 +30,6 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules"]
+  "//": "docs/referencia trae el paquete portable del smoke tester tal como llegó — código de OTRA aplicación, con sus propios imports (@/lib/logger, @/lib/supabase/server). Se guarda porque es la fuente de los 12 bugs documentados que evitamos, pero no compila acá ni tiene por qué.",
+  "exclude": ["node_modules", "docs/referencia"]
 }

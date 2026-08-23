@@ -611,3 +611,139 @@ export const SetterTurnSchema = z.object({
   motivo_de_escalamiento: z.string().nullable(),
 });
 export type SetterTurn = z.infer<typeof SetterTurnSchema>;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SMOKE TESTER — probarle la línea al cliente antes de venderle nada
+//
+// Los tres esquemas de acá comparten una restricción que no es estilística:
+// NO TIENEN UN SOLO `z.number()`. Ni el compilador de la prueba, ni el
+// comprador sintético, ni el evaluador devuelven una cifra.
+//
+// El compilador y el comprador porque lo que escriben sale por WhatsApp a un
+// negocio real sin ninguna pantalla intermedia donde un humano lo lea — el
+// mismo argumento de ADR 0024.
+//
+// El evaluador porque su salida la lee el CLIENTE en su diagnóstico, y ninguna
+// cifra que el cliente lee sale de un modelo (ADR 0007). Se le piden juicios
+// cualitativos —«bien», «regular»— y el código los convierte a la escala 0-100
+// con una tabla fija. Pedirle un 78 sería falsa precisión: el mismo texto le
+// saca 74 y 79 en dos corridas, y ese ruido llegaría al cliente como si fuera
+// medición. Ver docs/adr/0025-el-smoke-tester-como-evidencia.md
+// ═══════════════════════════════════════════════════════════════════════════
+
+/** Los cinco escalones. El código los mapea a números; el modelo solo elige. */
+export const JuicioSchema = z.enum(['excelente', 'bien', 'regular', 'mal', 'pesimo']);
+export type Juicio = z.infer<typeof JuicioSchema>;
+
+/**
+ * Lo que el modelo aporta al armar una prueba: LENGUAJE.
+ *
+ * Los hechos —qué precio está publicado, qué producto vende, en qué ciudad
+ * atiende— los pone el código leyendo el research. Acá solo se pide cómo se
+ * pregunta, con qué palabras, para que suene a una persona escribiendo por
+ * WhatsApp y no a un cuestionario.
+ */
+export const PruebaLenguajeSchema = z.object({
+  apertura: z
+    .string()
+    .describe(
+      'El primer mensaje que le llega al negocio. Como lo escribiría un cliente real por WhatsApp: dos frases máximo, sin markdown, sin viñetas, sin presentarse formalmente. NUNCA menciona que es una prueba.',
+    ),
+  objetivo: z
+    .string()
+    .describe(
+      'A dónde tiene que llegar esta conversación, en una frase, ya instanciada con lo que este negocio vende.',
+    ),
+  sondas: z
+    .array(
+      z.object({
+        id: z.string().describe('Slug corto y estable: precio, cobertura, evento, horario…'),
+        pregunta: z
+          .string()
+          .describe(
+            'La pregunta tal cual se manda por WhatsApp. UNA sola pregunta, máximo 20 palabras, en español coloquial del país del negocio.',
+          ),
+        por_que: z
+          .string()
+          .describe(
+            'Por qué esta pregunta le sirve a ESTE negocio. Lo lee el dueño en su diagnóstico, no el que contesta.',
+          ),
+        del_research: z
+          .boolean()
+          .describe(
+            'true si la pregunta salió de algo concreto que dice el sitio (un evento, una promoción, una promesa de respuesta). false si es una pregunta genérica del molde.',
+          ),
+      }),
+    )
+    .describe('Entre tres y seis. Ordenadas como las haría una persona, no como un formulario.'),
+  criterios_cierre: z
+    .array(z.string())
+    .describe('Cuándo el comprador da la conversación por terminada. Frases cortas.'),
+});
+export type PruebaLenguaje = z.infer<typeof PruebaLenguajeSchema>;
+
+/** Camino degradado: lo mínimo con lo que se puede correr una prueba. */
+export const PruebaLenguajeMinimalSchema = z.object({
+  apertura: z.string(),
+  preguntas: z.array(z.string()),
+});
+
+export function inflarPruebaLenguaje(
+  min: z.infer<typeof PruebaLenguajeMinimalSchema>,
+): PruebaLenguaje {
+  return {
+    apertura: min.apertura,
+    objetivo: 'Obtener respuesta a las preguntas y llegar a un paso siguiente concreto.',
+    sondas: min.preguntas.slice(0, 6).map((pregunta, i) => ({
+      id: `sonda_${i + 1}`,
+      pregunta,
+      por_que: 'Pregunta del molde: el research no alcanzó para especializarla.',
+      del_research: false,
+    })),
+    criterios_cierre: ['Contestaron lo que se preguntó', 'La conversación empezó a dar vueltas'],
+  };
+}
+
+/**
+ * Un turno del comprador sintético.
+ *
+ * `motivo` no decide nada: se guarda y es lo que después explica por qué la
+ * conversación tomó el rumbo que tomó. Vale su peso en oro depurando.
+ */
+export const CompradorTurnoSchema = z.object({
+  mensaje: z
+    .string()
+    .describe('Lo que se manda por WhatsApp, tal cual. Sin markdown, sin viñetas, sin comillas.'),
+  terminar: z.boolean().describe('true si el objetivo ya se cumplió o la charla da vueltas.'),
+  motivo: z.string().describe('Por qué sigue, o por qué termina. Una frase.'),
+});
+export type CompradorTurno = z.infer<typeof CompradorTurnoSchema>;
+
+/**
+ * La evaluación de una conversación cerrada.
+ *
+ * Cinco juicios cualitativos y tres listas. Las listas son lo que de verdad se
+ * lee: una alucinación citada textualmente es accionable, un 82 no.
+ */
+export const EvaluacionPruebaSchema = z.object({
+  exactitud: JuicioSchema.describe('¿Lo que dijo coincide con la ficha de verdad del sitio?'),
+  tono: JuicioSchema.describe('¿Profesional y apropiado para el mercado?'),
+  completitud: JuicioSchema.describe('¿Contestó cada pregunta entera, o esquivó?'),
+  proactividad: JuicioSchema.describe('¿Ofreció algo relevante sin que se lo pidieran?'),
+  ausencia_de_invenciones: JuicioSchema.describe(
+    'excelente = no inventó nada. pesimo = casi todo lo que dijo no está en la ficha.',
+  ),
+  alucinaciones: z
+    .array(z.string())
+    .describe('CITA TEXTUAL de cada dato que dijo y que contradice la ficha o no está en ella.'),
+  errores: z.array(z.string()).describe('Problemas concretos, en una frase cada uno.'),
+  sugerencias: z
+    .array(z.string())
+    .describe('Qué cambiaría el resultado. Dirigidas al dueño del negocio, no a nosotros.'),
+  resumen: z
+    .string()
+    .describe(
+      'Dos frases para el dueño del negocio, en segunda persona. Sin cifras: las cifras las pone el código.',
+    ),
+});
+export type EvaluacionPrueba = z.infer<typeof EvaluacionPruebaSchema>;

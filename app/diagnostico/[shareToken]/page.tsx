@@ -5,6 +5,8 @@ import { track } from '@/lib/events';
 import { refreshScore } from '@/lib/scoring';
 import { Card, Badge, SectionTitle, SourceMark } from '@/components/ui';
 import { MoneyPanel } from '@/components/money-panel';
+import { SmokeLive } from '@/components/smoke-live';
+import { resumenPorOrganizacion } from '@/lib/pruebas/resumen';
 import { PositionMatrix, type Point } from '@/components/position-matrix';
 import { formatMoney, formatNumber, dateInDays } from '@/lib/utils';
 import { toCurrency } from '@/config/assumptions';
@@ -116,6 +118,15 @@ export default async function DiagnosticPage({ params }: PageProps<'/diagnostico
 
   const recommended = recommendations?.find((r) => r.is_recommended) ?? recommendations?.[0];
   const band = (score?.band ?? 'auto') as 'auto' | 'assist' | 'attack';
+
+  // Las pruebas de línea arrancaron cuando terminó el research, o sea unos
+  // minutos antes de que el cliente llegara acá. Se carga el estado en el
+  // servidor para que la sección aparezca ya con contenido; el componente la
+  // mantiene viva por SSE desde ahí. Si nunca se lanzó nada —el sitio no
+  // publica número, el enfriamiento lo frenó, no hay canal— devuelve null y
+  // la sección simplemente no existe. Una sección vacía que dice «no hay
+  // datos» ocupa el mismo espacio que una llena y no aporta nada.
+  const pruebas = org?.id ? await resumenPorOrganizacion(org.id) : null;
 
   return (
     <main className="flex-1">
@@ -260,6 +271,17 @@ export default async function DiagnosticPage({ params }: PageProps<'/diagnostico
           currency={currency}
           languageChannelDetected={leaks.some((l) => l.key === 'language_channel')}
         />
+
+        {/* ── LO QUE PASÓ DE VERDAD · el smoke tester ───────────────────
+            Va DESPUÉS de las cifras y ANTES de las rutas, y ese orden es la
+            decisión de producto de toda la sección. Antes de las cifras
+            competiría con la fuga más grande, que es el corazón emocional del
+            diagnóstico. Después de las rutas llegaría tarde: para entonces el
+            cliente ya decidió. Acá cae justo donde hace su trabajo — convierte
+            «esto es lo que se te está yendo, según nuestros supuestos» en
+            «esto es lo que pasó cuando te escribimos», que es lo único de todo
+            el documento que no se puede discutir. Ver ADR 0025. */}
+        {pruebas ? <SmokeLive runId={pruebas.runId} inicial={pruebas} /> : null}
 
         {/* ── §7.5 LAS 3 RUTAS ─────────────────────────────────────────── */}
         <section className="reveal space-y-8" style={{ '--i': 4 } as React.CSSProperties}>

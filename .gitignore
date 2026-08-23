@@ -32,6 +32,11 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# …y este es el opt-in. `.env.example` no tiene un solo secreto: es la lista de
+# qué variables existen, para qué sirve cada una y qué pasa si falta. Estaba
+# ignorado, así que el archivo vivía solo en la máquina de quien lo escribió y
+# el que clonaba el repo no tenía forma de saber qué cargar.
+!.env.example
 
 # vercel
 .vercel
@@ -39,6 +44,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-.vercel
-.env*

@@ -26,6 +26,20 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Datos inválidos' }, { status: 400 });
   }
 
+  // `checkPassword` lee `env.adminPassword`, que LANZA si la variable no está.
+  // En un despliegue nuevo eso convierte el primer intento de entrar en un 500
+  // sin explicación, que es el peor momento posible para un error mudo: el que
+  // lo ve todavía no sabe si el problema es la contraseña, la base o el deploy.
+  if (!process.env.ADMIN_PASSWORD) {
+    return NextResponse.json(
+      {
+        error:
+          'Falta ADMIN_PASSWORD en el entorno. Cargala en Vercel (Settings → Environment Variables) y volvé a desplegar.',
+      },
+      { status: 503 },
+    );
+  }
+
   if (!checkPassword(parsed.data.password)) {
     return NextResponse.json({ error: 'Contraseña incorrecta.' }, { status: 401 });
   }

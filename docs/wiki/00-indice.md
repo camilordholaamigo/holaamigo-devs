@@ -93,6 +93,7 @@ guard_events                                     → 16
 | 20 | [Integraciones, CRM y habilidades](./20-integraciones-crm-y-habilidades.md) | El tool list como intersección, el "intraer", los lotes por créditos y el CRM con actor |
 | 21 | [El flujo inicial y su embudo](./21-flujo-inicial-y-embudo.md) | La línea de tiempo del research, la primera cifra en la pregunta 5, la cascada, el embudo y `/admin/embudo` |
 | 22 | [El agente de agendamiento](./22-agente-de-agendamiento.md) | Del diagnóstico al setter de WhatsApp: el playbook compilado, el vector store, las herramientas de agenda y el simulador |
+| 23 | [El smoke tester](./23-smoke-tester.md) | Le escribimos a la línea del prospecto y le contamos qué pasó: el motor por eventos, las tres capas de veredicto y los cuatro frenos |
 
 ## Los seis principios que gobiernan todo
 

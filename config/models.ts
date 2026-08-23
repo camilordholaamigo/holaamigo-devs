@@ -33,7 +33,9 @@ export type StepName =
   | 'classify'
   | 'chapter'
   | 'playbook'
-  | 'setter';
+  | 'setter'
+  | 'comprador'
+  | 'prueba';
 
 export const STEP_NAMES: StepName[] = [
   'research',
@@ -45,6 +47,8 @@ export const STEP_NAMES: StepName[] = [
   'chapter',
   'playbook',
   'setter',
+  'comprador',
+  'prueba',
 ];
 
 export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high';
@@ -106,6 +110,16 @@ export const STEP_LABELS: Record<StepName, { title: string; detail: string }> = 
     title: 'El Capítulo de cada mañana',
     detail:
       'Narra en 200 palabras qué hizo la organización ayer. Es lo único que algunos clientes leen: acá subir el modelo se nota en el tono, no en los números — esos ya vienen calculados.',
+  },
+  comprador: {
+    title: 'El comprador sintético del smoke tester',
+    detail:
+      'Redacta el turno siguiente de una prueba contra la línea real de un prospecto. Corre una vez por turno y lo que escribe lo lee un negocio de verdad: tiene que sonar a persona, no a modelo. Un modelo chico alcanza y sobra.',
+  },
+  prueba: {
+    title: 'El armado y la calificación de las pruebas',
+    detail:
+      'Instancia la plantilla de prueba con lo que el research encontró, y después califica la transcripción contra la ficha de verdad. Baja frecuencia y salida que el cliente lee: acá conviene el modelo bueno.',
   },
 };
 
@@ -220,6 +234,31 @@ export const DEFAULT_ROUTES: Record<StepName, StepConfig> = {
     temperature: 0.7,
     reasoningEffort: 'minimal',
     budgetTokens: 12_000,
+  },
+
+  comprador: {
+    // Lo que escribe sale por WhatsApp a un negocio real que no sabe que es
+    // una prueba. Temperatura alta a propósito: un comprador que escribe
+    // siempre igual se delata al tercer mensaje. Y modelo chico porque el
+    // trabajo es corto — dos frases en español colombiano, sin markdown.
+    models: chain('MODEL_COMPRADOR', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'),
+    maxOutputTokens: 2_000,
+    webSearch: false,
+    temperature: 0.8,
+    reasoningEffort: 'minimal',
+    budgetTokens: 20_000,
+  },
+
+  prueba: {
+    // Dos trabajos con el mismo perfil: armar el test desde el research y
+    // calificar la transcripción contra la ficha. Los dos corren pocas veces
+    // por cliente y los dos producen algo que el cliente lee.
+    models: chain('MODEL_PRUEBA', 'gpt-5-mini', 'gpt-4.1-mini', 'gpt-4o-mini'),
+    maxOutputTokens: 12_000,
+    webSearch: false,
+    temperature: null,
+    reasoningEffort: 'low',
+    budgetTokens: 40_000,
   },
 };
 

@@ -39,7 +39,15 @@ export type PlgEvent =
    *  más fuerte que tenemos: quien lo prueba entiende qué compró. */
   | 'agent_tested'
   | 'playbook_field_confirmed'
-  | 'whatsapp_number_requested';
+  | 'whatsapp_number_requested'
+  /** Smoke tester · le escribimos a la línea del prospecto. Ver wiki/23. */
+  | 'smoke_run_started'
+  | 'smoke_probe_closed'
+  /** El sitio no publica ningún número. Es un hallazgo, no un fallo: mide
+   *  cuántos prospectos ni siquiera tienen por dónde recibir un mensaje. */
+  | 'smoke_sin_numeros'
+  /** El cliente miró el panel de la prueba en su diagnóstico. */
+  | 'smoke_visto';
 
 export async function track(
   event: PlgEvent,

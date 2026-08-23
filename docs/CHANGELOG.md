@@ -8,6 +8,197 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.8.0] — 2026-08-23 · Le escribimos a su línea antes de venderle nada
+
+El diagnóstico era bueno y era, de punta a punta, una **proyección**. Las cuatro
+fugas salen de supuestos que el cliente puede mover; el embudo sale de la meta a
+90 días. Todo con su fórmula a la vista, y todo discutible.
+
+Ahora tiene una sección que no se discute:
+
+> «Le escribimos a tu línea de ventas a las 2:03. Contestaron a las 2:19.
+> Dieciséis minutos.»
+
+Un comprador sintético le escribe por WhatsApp al número que su propio sitio
+publica, la conversación corre hasta donde llegue, y se califica en tres capas.
+Arranca **cuando termina el research**, así que cuando el cliente llega al
+diagnóstico la primera prueba ya tiene respuesta —o ya sabemos que no la va a
+tener.
+
+Sale del paquete portable de Rentmies, que quedó en `docs/referencia/smoke-tester/`
+con sus doce bugs de producción documentados. Tres de sus ocho deudas se
+resolvieron acá en el diseño y no como parche: correlación por número, `turno` y
+`turn_token` como columnas, y evaluación que se dispara sola.
+
+Ver [ADR 0025](adr/0025-el-smoke-tester-como-evidencia.md) y
+[wiki/23](wiki/23-smoke-tester.md).
+
+### Agregado
+
+- **Las pruebas de línea** (`lib/pruebas/`, `holaamigo.smoke_*`). Cinco tablas,
+  un motor por eventos y tres capas de veredicto. `numeros.ts` saca los números
+  del `crawl_signals` que el crawler ya guardaba y nadie leía — **ningún modelo
+  elige un número**, y los fijos se descartan porque no tienen WhatsApp y
+  reportarlos como «no contestó» sería mentira. `compilar.ts` instancia el molde
+  con el research: si el sitio anuncia un evento, se pregunta por el evento.
+
+- **El motor por eventos** (`lib/pruebas/motor.ts`). Nadie espera a nadie: el
+  estado vive en la base y cada entrante despierta el sistema, hace un turno y
+  lo apaga. Es el único diseño que sobrevive a que una persona conteste un
+  WhatsApp cuarenta minutos después, con una función que Vercel corta a los
+  300 s. Guarda de concurrencia con `turn_token` **como columna**, para poder
+  reclamarla con un update condicional, que es atómico.
+
+- **Correlación por número.** `smoke_probes.target_phone` denormalizado y un
+  índice parcial sobre `awaiting_reply`. Es lo que permite escribirle a tres
+  líneas en paralelo — el original emparejaba contra «la conversación activa más
+  reciente» y por eso allá nunca se pudo paralelizar.
+
+- **Tres capas de veredicto.** Estado terminal (gratis, determinístico),
+  auditoría contra la rúbrica compilada (regex, determinística) y evaluación con
+  modelo. **El evaluador no devuelve números**: devuelve cinco juicios
+  cualitativos y la nota la calcula el código con una tabla fija, así que dos
+  evaluaciones con los mismos juicios dan exactamente el mismo número (ADR 0007).
+  Ningún esquema del smoke tester tiene un `z.number()`, y el test lo verifica.
+
+- **`components/smoke-live.tsx`** en el diagnóstico, entre las cifras y las
+  rutas. La barra avanza **solo cuando pasa un hecho con hora**; entre dos hechos
+  se queda quieta. Lo que corre es el cronómetro, y es real. El reloj es un
+  `useSyncExternalStore` con snapshot de servidor en 0: nada que dependa de la
+  hora se renderiza antes de montar (ADR 0023, y el bug 7 del paquete).
+
+- **`/admin/pruebas`** y **`/admin/pruebas/[id]`**. Crear una prueba contra
+  cualquier número **sin diagnóstico**, editar nuestra línea de Callbell sin
+  desplegar, y leer cada conversación con su plan compilado y sus dos
+  calificaciones. La agregación sale de `holaamigo.resumen_de_pruebas()`, no de
+  contar filas en el render.
+
+- **`POST /api/webhooks/callbell`.** Siempre 200, loguea la forma del payload
+  antes de parsear, y cuando no matchea nada deja escrito el estado del mundo que
+  sí encontró. Aguanta el envoltorio nativo de Callbell y el reenvío desde otra
+  aplicación.
+
+- **`/api/cron/pruebas`** cada 5 minutos: estancadas, colas huérfanas, zombis y
+  las que quedaron sin calificar.
+
+- **`/api/admin/pruebas/diagnose`** — qué variables están presentes (booleanos,
+  nunca sus valores), qué canal está activo, las últimas diez pruebas con su
+  error. El `POST` manda un mensaje de prueba y devuelve el error crudo con una
+  pista accionable.
+
+- **Capacidad `smoketest.probe`** en el catálogo de 0007: `external_comms`, techo
+  de plataforma **4** y no 5. Un número quemado por Meta no se recupera con un
+  rollback.
+
+- Dos pasos de modelo nuevos, `comprador` y `prueba`, visibles y ajustables en
+  `/admin/modelos`.
+
+- `scripts/test-smoke-tester.mjs` en `npm test`: esquema, claves de upsert,
+  idempotencia de la semilla, la función de resumen, y **las invariantes del
+  código** — sin `z.number()`, sin `await` pelado, webhook sin 5xx, primer
+  mensaje en primer plano, correlación por teléfono.
+
+### Cambiado
+
+- `lib/research/run.ts` lanza las pruebas al terminar, también en el camino de
+  caché: el análisis del sitio vale un mes, pero que hoy contesten en dos minutos
+  no dice nada de hace tres semanas. El enfriamiento de 72 h decide.
+- `blanquearCifras()` acepta un cuarto argumento con el texto de reemplazo. La
+  red es la misma; lo que cambia es la voz — «lo hablamos en la llamada» en boca
+  de un comprador delata la prueba.
+- El paquete de referencia se movió a `docs/referencia/smoke-tester/` y quedó
+  fuera de `tsconfig` y de ESLint: es código de otra aplicación, y corregirlo lo
+  volvería una copia editada en vez de la referencia.
+
+### Lo que NO se hizo, a propósito
+
+- **No se automatiza a quién más se le escribe.** Por el camino automático solo
+  entran números publicados en el sitio de la organización que pidió el
+  diagnóstico. Todo lo demás pasa por una persona en `/admin/pruebas`.
+- **El motor por eventos no tiene pruebas automáticas.** Necesita un proveedor
+  respondiendo, y simularlo probaría la simulación. Se verifica a mano con el
+  paso 6 de acá abajo. Es la deuda más grande de este cambio.
+- **No se le avisa al cliente cuando termina.** Si cerró la pestaña, tiene que
+  volver al enlace del diagnóstico. Resend ya está conectado; es lo obvio que
+  sigue.
+
+### Para desplegarlo
+
+**1 · Supabase — proyecto nuevo, hay que correr TODO.**
+
+El proyecto pasa a `vbtoqprrmgfhisfcmcpx`. Está vacío, así que las catorce
+migraciones van **en orden**, una por una, desde el SQL Editor:
+
+```
+0001_init.sql → 0002_seed_quiz.sql → 0003_motor_de_correo.sql →
+0004_exponer_api.sql → 0005_claves_y_settings.sql → 0006_sustrato.sql →
+0007_gobierno.sql → 0008_la_sala.sql → 0009_cro.sql → 0010_cmo.sql →
+0011_integraciones.sql → 0012_flujo_inicial.sql →
+0013_agente_de_agendamiento.sql → 0014_smoke_tester.sql
+```
+
+Todas son idempotentes. Correr una fuera de orden falla temprano diciendo cuál
+falta: `0013` sin `0011` y `0014` sin `0007` están cubiertas por
+`scripts/test-orden-migraciones.mjs` y `scripts/test-smoke-tester.mjs`.
+
+Después, **Project Settings → API → Exposed schemas: agregar `holaamigo`**. Sin
+eso PostgREST devuelve `Invalid schema: holaamigo` y todo falla con un mensaje
+que no dice qué hacer.
+
+Verificar con `GET /api/health`, que responde 503 mientras falte algo bloqueante.
+
+**2 · Vercel — variables nuevas.**
+
+```
+CALLBELL_API_KEY          Callbell → Settings → API
+CALLBELL_WEBHOOK_SECRET   una cadena larga y aleatoria, la inventás vos
+```
+
+Y las que cambian de valor con el proyecto nuevo:
+
+```
+SUPABASE_URL              https://vbtoqprrmgfhisfcmcpx.supabase.co
+SUPABASE_SERVICE_ROLE_KEY la del proyecto nuevo
+NEXT_PUBLIC_SITE_URL      el dominio del proyecto nuevo
+```
+
+Opcionales: `MODEL_COMPRADOR`, `MODEL_PRUEBA`.
+
+**3 · El webhook de Callbell.**
+
+Apuntarlo —o apuntar la aplicación que reenvía los mensajes— a:
+
+```
+https://TU_DOMINIO/api/webhooks/callbell?k=EL_SECRETO
+```
+
+El `GET` de esa misma URL devuelve `{"ok": true}` si el secreto es correcto.
+
+**4 · El cron.** `/api/cron/pruebas` cada 5 minutos ya está en `vercel.json`; se
+registra solo en el despliegue.
+
+**5 · La línea, y el envío aislado.** En `/admin/pruebas` → «Nuestra línea»,
+verificar el número y el `channel_uuid` que la migración siembra
+(`+573054182637` / `124902a5f0fa43289fe1fa7a4c23fe0d`) y **mandar un mensaje de
+prueba a tu propio celular con el botón que está ahí mismo**. No sigas hasta
+verlo llegar: la mitad de los problemas de configuración viven en ese paso y
+salen todos en dos segundos.
+
+**6 · Una conversación entera, a mano.** Creá una prueba contra tu propio
+celular, contestá vos, y verificá que la transcripción quede completa y que la
+prueba cierre sola. Es lo que las pruebas automáticas no cubren.
+
+**Apagado de emergencia**, sin desplegar:
+
+```sql
+insert into holaamigo.settings (key, value)
+values ('pruebas.bateria', '{"activo": false}')
+on conflict (key) do update
+  set value = jsonb_set(holaamigo.settings.value, '{activo}', 'false');
+```
+
+---
+
 ## [3.7.0] — 2026-08-20 · Del diagnóstico a un agente que agenda
 
 Appointment setting por WhatsApp es el primer mercado, y entre "el cliente leyó

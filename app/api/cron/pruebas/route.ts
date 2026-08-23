@@ -1,0 +1,132 @@
+import { NextResponse } from 'next/server';
+import { db } from '@/lib/supabase/admin';
+import { env } from '@/lib/env';
+import {
+  avanzarCola,
+  cerrarPrueba,
+  cerrarRunSiTerminó,
+  leerPrueba,
+  recogerSiEstancada,
+} from '@/lib/pruebas/motor';
+import { evaluarCerradasSinEvaluar } from '@/lib/pruebas/evaluador';
+import { ZOMBI_MS } from '@/lib/pruebas/types';
+
+/**
+ * GET /api/cron/pruebas — el watchdog del smoke tester.
+ *
+ * La red que recoge lo que las otras dos no ven. Las otras dos son el GET de
+ * estado y el stream, que corren cada pocos segundos **mientras alguien tiene
+ * la pestaña abierta**; ésta corre siempre.
+ *
+ * Cuatro casos, en orden de cuánto daño hacen si no se atienden:
+ *
+ *   A · CONVERSACIÓN ESTANCADA. El negocio dejó de contestar. Se cierra con el
+ *       veredicto que corresponde: `sin_respuesta` si nunca contestó,
+ *       `incompleto` si se cortó a mitad.
+ *
+ *   B · COLA HUÉRFANA. La prueba anterior terminó pero la siguiente nunca
+ *       arrancó, porque el proceso que la iba a arrancar murió. Se despierta.
+ *
+ *   C · ZOMBI. Una prueba en `running` sin ninguna actividad hace hora y
+ *       media. Es la peor de las cuatro: mientras existe, se lleva los
+ *       mensajes entrantes de las pruebas que sí están vivas contra ese
+ *       número. Se mata.
+ *
+ *   D · SIN CALIFICAR. Pruebas cerradas por timeout —donde no hubo webhook y
+ *       por lo tanto no corrió el disparo automático— que se quedaron sin
+ *       evaluación.
+ *
+ * La lección que hay detrás de que esto corra cada cinco minutos y no una vez
+ * al día: **la red de seguridad tiene que correr con la frecuencia del
+ * problema**. Una conversación dura veinte minutos; un cron diario no rescata
+ * nada, solo limpia cadáveres al otro día.
+ */
+
+export const runtime = 'nodejs';
+export const maxDuration = 300;
+export const dynamic = 'force-dynamic';
+
+export async function GET(request: Request) {
+  if (env.cronSecret) {
+    const auth = request.headers.get('authorization');
+    if (auth !== `Bearer ${env.cronSecret}`) {
+      return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
+    }
+  }
+
+  const reporte = { estancadas: 0, zombis: 0, colas: 0, evaluadas: 0, runs_cerrados: 0 };
+
+  try {
+    // ── A y C · pruebas vivas ────────────────────────────────────────────
+    const { data: vivas } = await db()
+      .from('smoke_probes')
+      .select('id, run_id, target_id, updated_at')
+      .eq('estado', 'running')
+      .limit(100);
+
+    for (const fila of vivas ?? []) {
+      try {
+        const prueba = await leerPrueba(fila.id);
+
+        if (Date.now() - Date.parse(prueba.updated_at) > ZOMBI_MS) {
+          await cerrarPrueba(prueba.id, {
+            estado: 'failed',
+            cerroCon: null,
+            motivo:
+              'Zombi: sin actividad hace más de hora y media. Se cierra para que no se lleve los mensajes de las pruebas siguientes.',
+          });
+          reporte.zombis += 1;
+          continue;
+        }
+
+        if (await recogerSiEstancada(prueba)) reporte.estancadas += 1;
+      } catch (err) {
+        console.error('[cron:pruebas] no se pudo revisar una prueba', err);
+      }
+    }
+
+    // ── B · colas huérfanas ───────────────────────────────────────────────
+    const { data: pendientes } = await db()
+      .from('smoke_probes')
+      .select('run_id, target_id')
+      .eq('estado', 'pending')
+      .limit(200);
+
+    const combinaciones = new Map<string, { runId: string; targetId: string }>();
+    for (const p of pendientes ?? []) {
+      combinaciones.set(`${p.run_id}:${p.target_id}`, {
+        runId: p.run_id,
+        targetId: p.target_id,
+      });
+    }
+
+    for (const { runId, targetId } of combinaciones.values()) {
+      try {
+        // `avanzarCola` es idempotente: si ya hay una corriendo, se retira.
+        await avanzarCola(runId, targetId);
+        reporte.colas += 1;
+      } catch (err) {
+        console.error('[cron:pruebas] no se pudo avanzar una cola', err);
+      }
+    }
+
+    // ── D · sin calificar ─────────────────────────────────────────────────
+    const { data: sinNota } = await db()
+      .from('smoke_probes')
+      .select('run_id')
+      .in('estado', ['completed', 'timeout'])
+      .is('evaluacion', null)
+      .limit(50);
+
+    for (const runId of new Set((sinNota ?? []).map((p) => p.run_id))) {
+      reporte.evaluadas += await evaluarCerradasSinEvaluar(runId);
+      await cerrarRunSiTerminó(runId);
+      reporte.runs_cerrados += 1;
+    }
+  } catch (err) {
+    console.error('[cron:pruebas] falló', err);
+    return NextResponse.json({ ok: false, reporte, error: String(err) }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, ...reporte });
+}

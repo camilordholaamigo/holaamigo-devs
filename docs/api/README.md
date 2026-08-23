@@ -567,3 +567,97 @@ Devuelve **503** si algo bloqueante falla (`env:supabase`, `db:schema`,
 
 Los nombres de los chequeos son públicos; los mensajes de error no, porque
 nombran infraestructura.
+
+---
+
+## Smoke tester
+
+Ver [wiki/23](../wiki/23-smoke-tester.md) y
+[ADR 0025](../adr/0025-el-smoke-tester-como-evidencia.md).
+
+### `POST /api/webhooks/callbell`
+
+**La entrada de todo.** Acá llegan las respuestas de los negocios a los que les
+escribimos.
+
+Autenticación por secreto en la URL (`?k=$CALLBELL_WEBHOOK_SECRET`): Callbell no
+firma sus webhooks. Sin el secreto configurado, acepta en desarrollo y rechaza
+en producción.
+
+**Siempre devuelve 200** salvo por falta de autorización. Un 5xx hace que el
+proveedor reintente o desactive el webhook, y se pierde la conversación entera
+por un error transitorio. Los errores van al log.
+
+El parser aguanta el envoltorio nativo de Callbell y el reenvío desde otra
+aplicación. Junta *todos* los teléfonos del payload y prueba cada uno contra las
+conversaciones que esperan respuesta, porque distintos emisores ponen el número
+del contacto en campos distintos.
+
+```jsonc
+// Callbell nativo
+{ "event": "message_created",
+  "payload": { "to": "...", "from": "...", "text": "Hola", "status": "received",
+               "contact": { "phoneNumber": "..." } } }
+
+// respuesta, siempre 200
+{ "ok": true, "prueba": "<uuid>", "camino": "turno" | "rafaga" }
+{ "ok": true, "ignorado": "sin match" | "es eco de un mensaje nuestro" | ... }
+```
+
+`GET` de la misma ruta con el secreto correcto devuelve `{ok: true}`. Sirve para
+verificar la configuración desde el navegador.
+
+### `GET /api/pruebas/estado/[runId]`
+
+El resumen de una corrida, y **la red de seguridad que de verdad funciona**:
+antes de responder, cierra las pruebas estancadas y despierta las colas
+huérfanas. Público por `runId`, igual que el stream del research.
+
+### `GET /api/pruebas/stream/[runId]`
+
+Lo mismo, por SSE. Emite `estado` con el resumen completo cada vez que algo
+cambia de verdad —se compara una huella—, y `finished` cuando no queda nada
+vivo. Una conversación quieta no manda nada.
+
+### `POST /api/admin/pruebas` · `PATCH`
+
+Crear una prueba a mano, sin diagnóstico. Solo admin.
+
+```jsonc
+// POST
+{ "telefono": "+57 300 123 4567", "nombre": "Ferretería El Tornillo",
+  "plantillas": ["servicio", "ventas"],
+  "organizationId": null,   // con él, compila con el research de esa org
+  "canalId": null, "contexto": null }
+→ { "ok": true, "runId": "<uuid>", "pruebas": 2 }
+
+// falta configuración: 400 con el nombre exacto
+→ { "error": "Falta configurar CALLBELL_API_KEY en Vercel.",
+    "falta": { "CALLBELL_API_KEY": true } }
+
+// PATCH — cancelar, recalificar, desbloquear un número
+{ "accion": "cancelar" | "reevaluar", "pruebaId": "<uuid>" }
+{ "accion": "desbloquear", "targetId": "<uuid>" }
+```
+
+### `POST /api/admin/pruebas/canales` · `DELETE`
+
+Nuestra línea: número y `channel_uuid` de Callbell, editables sin desplegar. El
+`DELETE` apaga, no borra: las pruebas viejas la referencian.
+
+### `POST /api/admin/pruebas/plantillas` · `DELETE`
+
+Los moldes de prueba. Las tres de fábrica se editan como cualquier otra.
+
+### `GET /api/admin/pruebas/diagnose` · `POST`
+
+«¿Por qué no salió el mensaje?». Variables presentes (booleanos, nunca sus
+valores), canal activo, últimas diez pruebas con su error, números bloqueados.
+
+El `POST` manda un mensaje de prueba a un número y devuelve el error crudo con
+una pista accionable. Es el paso que no hay que saltarse al configurar.
+
+### `GET /api/cron/pruebas`
+
+El watchdog, cada 5 minutos. Cierra estancadas y zombis, despierta colas
+huérfanas y califica lo que quedó sin nota. Protegido con `CRON_SECRET`.

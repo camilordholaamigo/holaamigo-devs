@@ -435,7 +435,19 @@ export async function compilePlaybook(args: {
 const CIFRA_DE_DINERO =
   /(?:\$|us\$|usd|cop|€|eur)\s?\d[\d.,]*(?:\s?(?:mil|millones|k|m))?|\d[\d.,]*\s?(?:dólares|dolares|pesos|usd|cop|euros)/gi;
 
-export function blanquearCifras(texto: string, ticketUsd: number, autorizados: string[]): string {
+/**
+ * `reemplazo` existe porque el smoke tester reusa esta red con otra voz. Ahí
+ * quien habla no es un vendedor sino un comprador sintético, y «lo hablamos en
+ * la llamada» en su boca es un no-sequitur que delata la prueba. La red es la
+ * misma —ninguna cifra que el modelo se invente sale por WhatsApp— y lo único
+ * que cambia es con qué se tapa. Ver lib/pruebas/comprador.ts.
+ */
+export function blanquearCifras(
+  texto: string,
+  ticketUsd: number,
+  autorizados: string[],
+  reemplazo = 'lo hablamos en la llamada',
+): string {
   if (!texto) return '';
 
   const permitidos = new Set(
@@ -445,7 +457,7 @@ export function blanquearCifras(texto: string, ticketUsd: number, autorizados: s
   );
 
   return texto.replace(CIFRA_DE_DINERO, (match) =>
-    permitidos.has(normalizarCifra(match)) ? match : 'lo hablamos en la llamada',
+    permitidos.has(normalizarCifra(match)) ? match : reemplazo,
   );
 }
 

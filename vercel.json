@@ -30,11 +30,22 @@
     {
       "path": "/api/cron/datos",
       "schedule": "0 15 * * *"
+    },
+    {
+      "path": "/api/cron/pruebas",
+      "schedule": "*/5 * * * *"
     }
   ],
   "headers": [
     {
       "source": "/api/research/stream/(.*)",
+      "headers": [
+        { "key": "Cache-Control", "value": "no-cache, no-transform" },
+        { "key": "X-Accel-Buffering", "value": "no" }
+      ]
+    },
+    {
+      "source": "/api/pruebas/stream/(.*)",
       "headers": [
         { "key": "Cache-Control", "value": "no-cache, no-transform" },
         { "key": "X-Accel-Buffering", "value": "no" }

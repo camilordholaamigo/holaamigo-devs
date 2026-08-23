@@ -22,7 +22,7 @@ ejecutar → documentar. No se salta ningún paso, ni cuando hay prisa.
 |---|---|
 | **Ninguna cifra que el cliente lee sale de un modelo.** El modelo aporta lenguaje y evidencia; el código aporta los números. | [ADR 0007](docs/adr/0007-numeros-deterministas.md) |
 | **No hay cliente de Supabase en el navegador.** RLS es deny-by-default, todo pasa por código de servidor con `service_role`. | [ADR 0003](docs/adr/0003-rls-deny-by-default.md) |
-| **Todo vive en el schema `holaamigo`**, nunca en `public`. El proyecto Supabase es compartido con Rentmies, que está en producción. | [ADR 0001](docs/adr/0001-schema-dedicado.md) |
+| **Todo vive en el schema `holaamigo`**, nunca en `public`, y el schema tiene que estar expuesto en la API de Supabase. Nació de compartir proyecto con Rentmies; se conserva con proyecto propio porque es lo que impide que un `.from('leads')` toque una tabla ajena el día que vuelva a compartirse. | [ADR 0001](docs/adr/0001-schema-dedicado.md) |
 | **Los esquemas Zod que van a OpenAI no usan `.optional()`, `.min()`, `.max()`, `.url()` ni `.email()`.** Usa `.nullable()` y valida rangos después. | `lib/ai/schemas.ts` |
 | **`lib/diagnostic/math.ts` no puede importar nada de servidor.** Corre también en el navegador para el recálculo en vivo. | [wiki/06](docs/wiki/06-diagnostico-y-matematica.md) |
 | **Los errores de telemetría nunca lanzan.** `track()`, `alertSlack()` y `sendDiagnosticEmail()` capturan y registran. | `lib/events.ts` |
@@ -34,6 +34,7 @@ ejecutar → documentar. No se salta ningún paso, ni cuando hay prisa.
 | **El tool list de un agente es una intersección que se calcula en runtime**, y una habilidad de clase `spend` o `irreversible` no se enciende sin operador y sin sobre. | [ADR 0022](docs/adr/0022-habilidades-y-crm-con-actor.md) |
 | **Nada en pantalla finge progreso que no está pasando**, y toda cifra adelantada sale de la misma función que produce la final. La agregación del embudo vive en SQL, no en el render. | [ADR 0023](docs/adr/0023-mostrar-el-trabajo.md) |
 | **El agente de agendamiento se compila del diagnóstico, y ningún número suyo lo escribe un modelo.** El esquema que va a OpenAI no tiene un solo `z.number()`, y `blanquearCifras()` borra las que se cuelen en el texto. El plan comercial ya no topa lo que el agente hace con sus propios objetos: solo lo que sale del edificio. | [ADR 0024](docs/adr/0024-el-agente-se-compila-del-diagnostico.md) |
+| **Al smoke tester le escribe gente real: cuatro frenos, no uno.** `authorize()`, el número tiene que estar publicado en el sitio de esa organización, 72 h de enfriamiento, y un bloqueo que ningún camino automático revierte. Y el evaluador no devuelve notas: devuelve juicios, y la nota la calcula el código. | [ADR 0025](docs/adr/0025-el-smoke-tester-como-evidencia.md) |
 
 ## Los seis principios (PRD §13)
 

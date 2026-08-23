@@ -10,6 +10,7 @@ import { RESEARCH_SYSTEM } from '@/config/prompts';
 import { crawlSite, crawlToPrompt } from '@/lib/research/crawl';
 import { track } from '@/lib/events';
 import { CURRENCY_BY_COUNTRY } from '@/config/assumptions';
+import { lanzarDesdeElDiagnostico } from '@/lib/pruebas/lanzar';
 
 /**
  * El motor de investigación (PRD §4.1, §8.3).
@@ -131,6 +132,13 @@ export async function executeResearch(runId: string): Promise<void> {
       sessionId: run.session_id,
       props: { domain: org.domain, from: cached.id },
     });
+
+    // El research se reusa; las pruebas de línea NO se saltan por eso. El
+    // enfriamiento de 72 h de `lib/pruebas/lanzar.ts` es el que decide si esta
+    // vez se escribe o no, y es la decisión correcta: el análisis del sitio
+    // sigue valiendo un mes, pero que hoy contesten en dos minutos no dice
+    // nada de si contestaban hace tres semanas.
+    await lanzarPruebasDeLinea(org.id, run.session_id);
     return;
   }
 
@@ -229,6 +237,8 @@ export async function executeResearch(runId: string): Promise<void> {
         crawl_ok: crawl.ok,
       },
     });
+
+    await lanzarPruebasDeLinea(org.id, run.session_id);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const attempts = (run.attempts ?? 0) + 1;
@@ -465,4 +475,30 @@ export async function findingsForOrganization(
   }
 
   return { status: String(latest.status), sections, sources, runId: latest.id };
+}
+
+/**
+ * Le escribe a la línea del prospecto, en cuanto sabemos cuál es.
+ *
+ * Se dispara acá y no al terminar el quiz porque éste es el primer instante en
+ * que existen las dos cosas que hacen falta: los números que el sitio publica y
+ * el material para especializar las preguntas. Y son cuatro o cinco minutos de
+ * ventaja sobre el cliente, que todavía está respondiendo — cuando llegue al
+ * diagnóstico, la primera prueba ya tiene respuesta, o ya sabemos que no la va
+ * a tener. Esa ventaja es la diferencia entre mostrarle un resultado y
+ * mostrarle un spinner.
+ *
+ * NUNCA LANZA y nunca bloquea. Un fallo acá no puede tocar el research: el
+ * diagnóstico del cliente vale por sí solo y esto es evidencia encima.
+ */
+async function lanzarPruebasDeLinea(
+  organizationId: string,
+  sessionId: string | null,
+): Promise<void> {
+  try {
+    const r = await lanzarDesdeElDiagnostico({ organizationId, sessionId });
+    if (r.motivo) console.info(`[research] sin pruebas de línea: ${r.motivo}`);
+  } catch (err) {
+    console.error('[research] el lanzamiento de pruebas falló', err);
+  }
 }

@@ -26,6 +26,10 @@ const NAV = [
   // separación es la disciplina de P5: la CMO detecta, nosotros decidimos qué
   // se le ofrece. Ver docs/adr/0021-la-cmo-expandida.md
   { href: '/admin/senales', label: 'Señales' },
+  // Las pruebas de línea van acá y no en la consola del cliente: es evidencia
+  // sobre SU negocio que producimos nosotros, y el que decide a quién se le
+  // escribe es alguien del equipo. Ver docs/adr/0025.
+  { href: '/admin/pruebas', label: 'Pruebas' },
   { href: '/admin/agents', label: 'Agentes' },
   { href: '/admin/runs', label: 'Corridas' },
   { href: '/admin/habilidades', label: 'Habilidades' },
