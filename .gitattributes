@@ -1,0 +1,23 @@
+# Finales de línea: LF en el repositorio, siempre.
+#
+# Existe porque `core.autocrlf = true` está puesto en la máquina de desarrollo y
+# eso hace que cada `git add` avise «LF will be replaced by CRLF». El aviso es
+# ruido, pero lo que hay debajo no: sin esto, qué termina guardado en el
+# repositorio depende de la configuración de quien commitea. Un colaborador con
+# otra configuración —o el mismo repositorio clonado en Linux— empieza a
+# producir diffs de archivos enteros donde lo único que cambió fue el final de
+# cada línea.
+#
+# Vercel construye en Linux. Que el repositorio sea LF y no dependa de nadie es
+# lo que hace que lo que se prueba acá sea byte por byte lo que se despliega.
+* text=auto eol=lf
+
+# Binarios: que git no intente normalizar nada adentro.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
