@@ -982,7 +982,7 @@ verifica a mano con el procedimiento de
 | `/api/admin/pruebas/canales` | POST / DELETE | Nuestras líneas. El DELETE apaga, no borra: las conversaciones viejas apuntan al canal con una clave foránea |
 | `/api/admin/pruebas/diagnose` | GET / POST | Qué variables faltan · mandar un mensaje de prueba desde una línea |
 | `/api/pruebas/estado/[runId]` | GET | El estado en vivo **y la red de seguridad real** del motor |
-| `/api/webhooks/wzap` | POST | La entrada de wzap. Secreto en la cabecera `x-webhook-secret`. **Siempre devuelve 200** |
+| `/api/webhooks/wzap` | POST | La entrada de wzap. Secreto en la cabecera `x-webhook-secret`, o en `?k=` / `?secret=`. El 401 dice cómo mandarlo. **Siempre devuelve 200** |
 | `/api/webhooks/callbell` | POST | La entrada de Callbell. Secreto en `?k=`. **Siempre devuelve 200** |
 
 `POST /api/admin/pruebas/lotes` **ya no existe**. Era el segundo camino de

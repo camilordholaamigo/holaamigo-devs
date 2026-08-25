@@ -24,8 +24,10 @@ import { avanzarLote } from '@/lib/pruebas/lote';
  * wzap deja configurar una cabecera secreta por webhook, así que acá el secreto
  * va en `x-webhook-secret` y no en la URL. Es mejor que el `?k=` de Callbell por
  * una razón concreta: las URLs quedan escritas en los logs de todo lo que hay en
- * el camino, las cabeceras no. Se acepta `?k=` igual, para no bloquear la puesta
- * en marcha si el panel del proveedor no ofreciera el campo de cabecera.
+ * el camino, las cabeceras no. Se aceptan `?k=` y `?secret=` igual, para no
+ * bloquear la puesta en marcha si el panel del proveedor no ofreciera el campo de
+ * cabecera — y porque el nombre del parámetro es exactamente el tipo de detalle
+ * que se escribe distinto de como está en la documentación.
  *
  * Sin `WZAP_WEBHOOK_SECRET` configurado, la ruta acepta en desarrollo y rechaza
  * en producción — mismo criterio que las otras dos entradas del sistema. Un
@@ -43,26 +45,57 @@ export const runtime = 'nodejs';
 export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
+/**
+ * Cuatro formas de mandar el mismo secreto, y eso es a propósito.
+ *
+ * La cabecera es la buena y las tres alternativas existen por un modo de fallo
+ * concreto: la URL del webhook se escribe a mano en el panel del proveedor, y si
+ * el nombre del parámetro no coincide la ruta contesta 401 — que es
+ * indistinguible de «la llave está mal» y de «el deploy todavía no subió». Se
+ * pierden veinte minutos en la pregunta equivocada.
+ *
+ * Aceptar `k` y `secret` no debilita nada: el VALOR sigue teniendo que coincidir.
+ * Lo único que se pierde es una discusión sobre cómo se llama el campo.
+ */
+const NOMBRES_DEL_SECRETO = ['k', 'secret'] as const;
+
 function autorizado(request: Request): boolean {
   const esperado = process.env.WZAP_WEBHOOK_SECRET;
   if (!esperado) return process.env.NODE_ENV !== 'production';
-  const cabecera = request.headers.get('x-webhook-secret');
-  if (cabecera && cabecera === esperado) return true;
-  return new URL(request.url).searchParams.get('k') === esperado;
+
+  for (const cabecera of ['x-webhook-secret', 'x-wzap-secret']) {
+    if (request.headers.get(cabecera) === esperado) return true;
+  }
+
+  const params = new URL(request.url).searchParams;
+  return NOMBRES_DEL_SECRETO.some((nombre) => params.get(nombre) === esperado);
+}
+
+/**
+ * El 401 dice CÓMO se manda el secreto, nunca si está configurado ni cuál es.
+ *
+ * Es la diferencia entre un rechazo que se arregla solo y uno que abre un ticket.
+ * No filtra nada: quien ve esto ya sabe que la ruta pide un secreto.
+ */
+function rechazo() {
+  return NextResponse.json(
+    {
+      ok: false,
+      error: 'no autorizado',
+      como: 'cabecera x-webhook-secret: <WZAP_WEBHOOK_SECRET>, o ?k=<WZAP_WEBHOOK_SECRET>',
+    },
+    { status: 401 },
+  );
 }
 
 /** Ping para verificar desde el navegador que la ruta está viva y autorizada. */
 export async function GET(request: Request) {
-  if (!autorizado(request)) {
-    return NextResponse.json({ ok: false, error: 'no autorizado' }, { status: 401 });
-  }
+  if (!autorizado(request)) return rechazo();
   return NextResponse.json({ ok: true, servicio: 'smoke-tester', proveedor: 'wzap', listo: true });
 }
 
 export async function POST(request: Request) {
-  if (!autorizado(request)) {
-    return NextResponse.json({ ok: false, error: 'no autorizado' }, { status: 401 });
-  }
+  if (!autorizado(request)) return rechazo();
 
   let raw: unknown = null;
   try {

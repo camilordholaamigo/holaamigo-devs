@@ -34,7 +34,8 @@ quedaron son otros tres y están en [ADR 0028](adr/0028-dos-transportes.md).
   texto por este canal» y no sabe por qué API salió.
 
 - **`/api/webhooks/wzap`** — ruta nueva, con el secreto en la cabecera
-  `x-webhook-secret` (se acepta `?k=` también). Es un archivo aparte y no un `if`
+  `x-webhook-secret` (se aceptan `?k=` y `?secret=` también, y el 401 dice cómo
+  mandarlo: un rechazo opaco ahí es indistinguible de «el deploy no subió»). Es un archivo aparte y no un `if`
   adentro de la ruta de Callbell a propósito: esa ruta está corriendo y
   recibiendo reenvíos de otra aplicación, y no se pone en juego para ahorrar
   sesenta líneas.
