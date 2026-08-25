@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Card } from '@/components/ui';
 import { cn } from '@/lib/utils';
-import type { CanalRow } from '@/lib/pruebas/types';
+import type { CanalRow, ProveedorDeLinea } from '@/lib/pruebas/types';
 
 /**
  * Las piezas con estado de /admin/pruebas.
@@ -41,10 +41,15 @@ import type { CanalRow } from '@/lib/pruebas/types';
 export function LineasDeCallbell({ canales }: { canales: CanalRow[] }) {
   const [agregando, setAgregando] = useState(canales.length === 0);
 
+  // La preferida se calcula acá y no en cada fila: es una propiedad del
+  // conjunto, no de la línea. `canales` llega ya ordenado por prioridad desde la
+  // pantalla, así que es la primera que esté activa.
+  const preferidaId = canales.find((c) => c.activo)?.id ?? null;
+
   return (
     <div className="space-y-3">
       {canales.map((c) => (
-        <LineaEditable key={c.id} canal={c} />
+        <LineaEditable key={c.id} canal={c} esPreferida={c.id === preferidaId} />
       ))}
 
       {agregando ? (
@@ -65,9 +70,11 @@ export function LineasDeCallbell({ canales }: { canales: CanalRow[] }) {
 function LineaEditable({
   canal,
   onCerrar,
+  esPreferida = false,
 }: {
   canal: CanalRow | null;
   onCerrar?: () => void;
+  esPreferida?: boolean;
 }) {
   const router = useRouter();
   const nueva = canal === null;
@@ -77,6 +84,9 @@ function LineaEditable({
   const [phone, setPhone] = useState(canal?.phone_e164 ?? '');
   const [channelUuid, setChannelUuid] = useState(canal?.channel_uuid ?? '');
   const [templateUuid, setTemplateUuid] = useState(canal?.template_uuid ?? '');
+  // Una línea nueva nace en wzap, que es el transporte preferido (ADR 0028).
+  const [provider, setProvider] = useState<ProveedorDeLinea>(canal?.provider ?? 'wzap');
+  const [prioridad, setPrioridad] = useState(String(canal?.prioridad ?? 100));
   const [activo, setActivo] = useState(canal?.activo ?? true);
   const [guardando, setGuardando] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -96,9 +106,11 @@ function LineaEditable({
         body: JSON.stringify({
           id: canal?.id ?? null,
           label,
+          provider,
           phone,
           channelUuid,
           templateUuid: templateUuid.trim() || null,
+          prioridad: Number(prioridad) || 100,
           activo,
         }),
       });
@@ -143,9 +155,13 @@ function LineaEditable({
           <div className="min-w-0 flex-1">
             <p className="truncate text-[14px] font-medium text-ink">{canal.label}</p>
             <p className="tnum text-[12.5px] text-ink-faint">
-              {canal.phone_e164} · {canal.channel_uuid.slice(0, 8)}…
+              {canal.phone_e164} · {canal.provider} · {canal.channel_uuid.slice(0, 8)}…
             </p>
           </div>
+          {/* Cuál línea usa el camino automático es la pregunta que trae a
+              alguien a esta pantalla. Se responde acá y no adentro del
+              formulario, que es donde estaba invisible. */}
+          {esPreferida ? <Badge tone="neutral">preferida</Badge> : null}
           <Badge tone={canal.activo ? 'money' : 'muted'}>
             {canal.activo ? 'activa' : 'apagada'}
           </Badge>
@@ -179,19 +195,45 @@ function LineaEditable({
             placeholder="+573054182637"
             requerido
           />
+          <label className="space-y-1.5">
+            <span className="block text-[12.5px] font-medium text-ink-soft">Proveedor</span>
+            <select
+              value={provider}
+              onChange={(e) => setProvider(e.target.value as ProveedorDeLinea)}
+              className="w-full rounded-xl border border-line-strong bg-paper px-3 py-2.5 text-[14px] text-ink outline-none transition focus:border-ink"
+            >
+              <option value="wzap">wzap</option>
+              <option value="callbell">Callbell</option>
+            </select>
+          </label>
           <Campo
-            etiqueta="channel_uuid de Callbell"
+            etiqueta={provider === 'wzap' ? 'device de wzap' : 'channel_uuid de Callbell'}
             valor={channelUuid}
             onChange={setChannelUuid}
-            placeholder="124902a5f0fa43289fe1fa7a4c23fe0d"
+            placeholder={
+              provider === 'wzap'
+                ? '69e62a9b0b653ef3ef32e965'
+                : '124902a5f0fa43289fe1fa7a4c23fe0d'
+            }
             requerido
           />
           <Campo
-            etiqueta="template_uuid (solo API oficial)"
-            valor={templateUuid}
-            onChange={setTemplateUuid}
-            placeholder="vacío si la línea es por QR"
+            etiqueta="Prioridad (menor gana)"
+            valor={prioridad}
+            onChange={setPrioridad}
+            placeholder="100"
           />
+          {/* wzap conecta por QR y no tiene plantillas: el campo solo aplica al
+              camino de la API oficial de Callbell, y mostrarlo igual invitaba a
+              llenarlo con cualquier cosa. */}
+          {provider === 'callbell' ? (
+            <Campo
+              etiqueta="template_uuid (solo API oficial)"
+              valor={templateUuid}
+              onChange={setTemplateUuid}
+              placeholder="vacío si la línea es por QR"
+            />
+          ) : null}
         </div>
 
         <label className="flex items-center gap-2.5 text-[13.5px] text-ink-soft">

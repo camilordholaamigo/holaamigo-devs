@@ -263,13 +263,25 @@ export interface Evaluacion {
 // LAS FILAS
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * Quién transporta los mensajes de una línea.
+ *
+ * Dos, y el que despacha es `lib/pruebas/transporte.ts`. Ninguna otra parte del
+ * subsistema mira este campo: el motor pide «mandá esto por este canal» y no
+ * sabe —ni tiene por qué— con qué proveedor salió (ADR 0028).
+ */
+export type ProveedorDeLinea = 'callbell' | 'wzap';
+
 export interface CanalRow {
   id: string;
   label: string;
-  provider: 'callbell';
+  provider: ProveedorDeLinea;
   phone_e164: string;
+  /** En Callbell el `channel_uuid`; en wzap el `device`. */
   channel_uuid: string;
   template_uuid: string | null;
+  /** Menor gana. Cuál línea usa el camino automático cuando nadie eligió. */
+  prioridad: number;
   activo: boolean;
   notas: string | null;
 }

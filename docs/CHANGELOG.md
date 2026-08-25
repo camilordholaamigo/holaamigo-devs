@@ -8,6 +8,94 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.12.0] — 2026-08-25 · Dos transportes, y wzap primero
+
+El smoke tester deja de depender de un solo proveedor de WhatsApp. wzap entra
+como transporte preferido; Callbell queda de suplente y no se toca nada de su
+configuración.
+
+Empezó por otra pregunta —«¿podemos contestarle con un botón a un bot de
+botones?»— y la respuesta cerró ese camino: **WhatsApp dejó de aceptar botones
+nativos por conexiones no oficiales el 2023-05-10** y los proveedores los
+entregan convertidos a texto plano. Afecta a todos por igual. Los motivos que
+quedaron son otros tres y están en [ADR 0028](adr/0028-dos-transportes.md).
+
+### Agregado
+
+- **`lib/pruebas/wzap.ts`** — el segundo transporte.
+  `POST https://api.wzap.chat/v1/messages`, cabecera `Token` sin prefijo.
+  `llaveWzap()` le saca el prefijo `Token ` a la variable por el mismo incidente
+  que costó una tarde con `Bearer`. El contrato **no** salió de la documentación
+  del proveedor —pide sesión— sino de tres llamadas contra la API real, y las
+  tres están listadas en el ADR para poder repetirlas.
+
+- **`lib/pruebas/transporte.ts`** — el despachador. Mira `canal.provider` y
+  elige. Nadie más en el subsistema mira ese campo: `motor.ts` pide «mandá este
+  texto por este canal» y no sabe por qué API salió.
+
+- **`/api/webhooks/wzap`** — ruta nueva, con el secreto en la cabecera
+  `x-webhook-secret` (se acepta `?k=` también). Es un archivo aparte y no un `if`
+  adentro de la ruta de Callbell a propósito: esa ruta está corriendo y
+  recibiendo reenvíos de otra aplicación, y no se pone en juego para ahorrar
+  sesenta líneas.
+
+- **`smoke_channels.prioridad`** — cuál es la línea preferida. Menor gana,
+  `created_at` desempata, editable desde `/admin/pruebas` sin desplegar. El
+  formulario de líneas ahora tiene selector de proveedor, rotula el
+  identificador según cuál sea (`device` en wzap, `channel_uuid` en Callbell), y
+  la pantalla marca cuál es la preferida.
+
+- **`pistasDeBotones()`** — deja en el log qué claves del payload entrante huelen
+  a mensaje interactivo. No clasifica, no puntúa y no escribe en la base. Es
+  instrumentación para responder con datos la pregunta que originó todo esto.
+
+- **Dos chequeos en `/api/health`:** `db:v12` (la columna de preferencia existe,
+  el `check` acepta `wzap`, y hay una línea de wzap cargada — dice cuál es la
+  preferida y con qué prioridad) y `env:wzap`, que no bloquea porque sin la llave
+  el subsistema degrada a Callbell.
+
+### Cambiado
+
+- **«Qué falta» se pregunta por línea y no por sistema.** `faltaParaEnviar()` sin
+  argumentos ya no existe: una `WZAP_API_KEY` ausente no importa si no hay
+  ninguna línea de wzap activa. En `lanzar.ts` y `lote.ts` el canal se resuelve
+  **antes** de preguntar qué falta — al revés se abortaba por la llave de un
+  proveedor una prueba que iba a salir por el otro.
+- `enviarMensaje()` y `faltaParaEnviar()` de `callbell.ts` pasaron a llamarse
+  `enviarPorCallbell()` y `faltaParaEnviarCallbell()`. El `enviarMensaje()` que
+  usa el resto del código ahora vive en `transporte.ts`.
+- `GET /api/admin/pruebas/diagnose` devuelve `webhooks` (las dos URLs) en vez de
+  `webhook`, y agrega `lineas` en orden de preferencia. El POST dice por qué
+  proveedor salió el mensaje.
+
+### Cómo desplegarlo
+
+1. **Correr `supabase/migrations/0018_wzap_como_transporte.sql`** en el editor de
+   Supabase. Amplía el `check` del proveedor, agrega `prioridad`, siembra la
+   línea de wzap con prioridad 10 y baja las de Callbell a 200. Es idempotente y
+   la siembra usa `on conflict do nothing`, así que no pisa lo que se ajuste a
+   mano después.
+2. **Cargar dos variables en Vercel** (Production y Preview) y volver a
+   desplegar, porque el build congela las variables del momento:
+   - `WZAP_API_KEY` — la llave de la cuenta de wzap.
+   - `WZAP_WEBHOOK_SECRET` — cualquier cadena larga que vos elijas; es la que va
+     en la cabecera del webhook.
+3. **Crear el webhook en wzap**: Webhooks → nuevo, evento `message:in:new`,
+   device de la línea de pruebas, URL
+   `https://holaamigo-devs.vercel.app/api/webhooks/wzap`, y la cabecera
+   `x-webhook-secret` con el valor del paso 2. **No hay que tocar ni borrar los
+   webhooks que ya existen**: wzap admite varios por device y los que están
+   apuntan a otras aplicaciones.
+4. **En Callbell no hay que cambiar nada.** Su webhook sigue igual y su línea
+   sigue activa, solo deja de ser la preferida.
+5. Verificar: `GET /api/health` tiene que listar `db:v12` y `env:wzap`; y
+   `GET /api/admin/pruebas/diagnose` tiene que mostrar `WZAP_API_KEY: true` y la
+   línea de wzap primera en `lineas`.
+6. Probar el envío con el botón de prueba de la línea en `/admin/pruebas`, contra
+   un celular propio, antes de apuntarle a un prospecto.
+
+---
+
 ## [3.11.0] — 2026-08-23 · `Bearer Bearer`, y el botón que faltaba
 
 Dos cosas que impedían probar el smoke tester de punta a punta.

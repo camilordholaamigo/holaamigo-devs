@@ -2,7 +2,8 @@ import { db, mustWrite, tryWrite } from '@/lib/supabase/admin';
 import { readSetting } from '@/lib/settings';
 import { track } from '@/lib/events';
 import { authorize } from '@/lib/governance/authorize';
-import { canalActivo, hayTransporte } from '@/lib/pruebas/callbell';
+import { canalActivo } from '@/lib/pruebas/callbell';
+import { faltaParaCanal } from '@/lib/pruebas/transporte';
 import { compilarPrueba, plantilla } from '@/lib/pruebas/compilar';
 import { arrancarPrueba, cancelarVivasContra, progreso } from '@/lib/pruebas/motor';
 import { numerosDelResearch, registrarObjetivos } from '@/lib/pruebas/numeros';
@@ -114,10 +115,15 @@ export async function lanzarDesdeElDiagnostico(args: {
   try {
     const config = await configDePruebas();
     if (!config.activo) return vacio('las pruebas están apagadas en settings');
-    if (!hayTransporte()) return vacio('falta CALLBELL_API_KEY');
-
+    // El canal se resuelve ANTES de preguntar qué falta, y el orden importa:
+    // con dos proveedores, «falta la llave» solo tiene sentido respecto de la
+    // línea que se va a usar. Al revés se aborta por una WZAP_API_KEY ausente
+    // una prueba que iba a salir por Callbell.
     const canal = await canalActivo();
     if (!canal) return vacio('no hay ningún canal activo en /admin/pruebas');
+
+    const falta = Object.keys(faltaParaCanal(canal));
+    if (falta.length > 0) return vacio(`falta ${falta.join(', ')} para la línea ${canal.label}`);
 
     // La correa. Un `blocked` acá no es un error: es el sistema funcionando.
     const auth = await authorize({

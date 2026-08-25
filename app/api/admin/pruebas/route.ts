@@ -2,7 +2,7 @@ import { NextResponse, after } from 'next/server';
 import { z } from 'zod';
 import { currentAdmin } from '@/lib/auth/admin';
 import { db, mustWrite } from '@/lib/supabase/admin';
-import { faltaParaEnviar } from '@/lib/pruebas/callbell';
+import { faltaParaCanalesPedidos } from '@/lib/pruebas/transporte';
 import { crearLote, objetivosDeOrganizaciones, type ObjetivoDeLote } from '@/lib/pruebas/lote';
 import { cancelarVivasContra, cerrarPrueba, leerPrueba } from '@/lib/pruebas/motor';
 import { evaluarPrueba } from '@/lib/pruebas/evaluador';
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const falta = faltaParaEnviar();
+  const falta = await faltaParaCanalesPedidos(parsed.data.canales);
   if (Object.keys(falta).length > 0) {
     return NextResponse.json(
       { error: `Falta configurar ${Object.keys(falta).join(', ')} en Vercel.`, falta },

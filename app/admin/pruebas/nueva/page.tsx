@@ -2,7 +2,8 @@ import Link from 'next/link';
 import { db } from '@/lib/supabase/admin';
 import { Card, SectionTitle } from '@/components/ui';
 import { PruebaNueva, type ClienteProbable, type MoldeDeBateria } from '@/components/prueba-nueva';
-import { canalesActivos, faltaParaEnviar } from '@/lib/pruebas/callbell';
+import { canalesActivos } from '@/lib/pruebas/callbell';
+import { faltaParaLineas } from '@/lib/pruebas/transporte';
 import { configDePruebas } from '@/lib/pruebas/lanzar';
 
 /**
@@ -115,7 +116,7 @@ export default async function NuevaPruebaPage() {
     .map((id) => porId.get(id))
     .filter((m): m is MoldeDeBateria => Boolean(m));
 
-  const falta = Object.keys(faltaParaEnviar());
+  const falta = Object.keys(faltaParaLineas(canales));
 
   return (
     <main className="mx-auto max-w-6xl space-y-8 px-6 py-10">

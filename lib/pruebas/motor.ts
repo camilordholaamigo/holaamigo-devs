@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { db, unwrap, mustWrite, tryWrite } from '@/lib/supabase/admin';
 import { track } from '@/lib/events';
-import { canalPorId, enviarMensaje } from '@/lib/pruebas/callbell';
+import { canalPorId } from '@/lib/pruebas/callbell';
+import { enviarMensaje } from '@/lib/pruebas/transporte';
 import { siguienteTurno } from '@/lib/pruebas/comprador';
 import { auditar } from '@/lib/pruebas/auditor';
 import {

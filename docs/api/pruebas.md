@@ -31,7 +31,9 @@ nadie sabía qué hacía el botón.
 | Módulo | De qué se ocupa |
 |---|---|
 | [`types.ts`](#typests) | Los contratos y las constantes de tiempo |
-| [`callbell.ts`](#callbellts) | El transporte: mandar y parsear |
+| [`transporte.ts`](#transportets) | Quién manda el mensaje: elige proveedor |
+| [`callbell.ts`](#callbellts) | El transporte de Callbell, y la tabla de líneas |
+| [`wzap.ts`](#wzapts) | El transporte de wzap |
 | [`numeros.ts`](#numerosts) | De dónde salen los números |
 | [`compilar.ts`](#compilarts) | Plantilla + research → prueba concreta |
 | [`guion.ts`](#guionts) | Formulario → prueba concreta, sin modelo y sin base |
@@ -147,6 +149,44 @@ proveedor».
 
 ---
 
+## `transporte.ts`
+
+El despachador. Existe desde ADR 0028, cuando aparecieron dos proveedores.
+
+```ts
+enviarMensaje(spec: EnvioSpec): Promise<ResultadoEnvio>
+```
+
+Mira `spec.canal.provider` y llama a `enviarPorWzap()` o a `enviarPorCallbell()`.
+**Nadie más en el subsistema mira ese campo.** `motor.ts` pide «mandá este texto
+por este canal» y no sabe por qué API salió — y no tiene por qué: agregar un
+tercer proveedor es un `case` acá y un archivo nuevo.
+
+`usarPlantilla` se ignora en las líneas de wzap, en silencio y a propósito: el
+motor lo manda siempre en el primer turno y no tiene que saber que wzap conecta
+por QR y no tiene plantillas.
+
+```ts
+faltaParaProveedor(provider: ProveedorDeLinea): Record<string, true>
+faltaParaCanal(canal: CanalRow): Record<string, true>
+hayTransportePara(canal: CanalRow): boolean
+faltaParaLineas(canales: CanalRow[]): Record<string, true>          // sync
+faltaParaCanalesPedidos(ids?: string[] | null): Promise<Record<string, true>>
+```
+
+Cuatro formas de la misma pregunta, y la diferencia entre ellas es qué se sabe en
+el punto donde se llama. `faltaParaLineas()` es sync y sobre filas ya leídas
+—las dos pantallas que lo muestran ya cargaron los canales para pintarlos—;
+`faltaParaCanalesPedidos()` es la que corre en el POST que crea una prueba, donde
+solo hay ids.
+
+**Lo que ya no existe es una pregunta global.** `faltaParaEnviar()` sin argumentos
+se fue: con dos proveedores, «falta la llave» solo tiene sentido respecto de la
+línea que se va a usar. Y **el canal se resuelve antes de preguntar**: al revés
+se abortaba por la llave de un proveedor una prueba que iba a salir por el otro.
+
+---
+
 ## `callbell.ts`
 
 El transporte. **Asíncrono**: mandamos un HTTP y la respuesta llega minutos
@@ -160,7 +200,9 @@ hayTransporte(): boolean
 
 Precheque de entorno. Se llama **antes** de crear nada. Un 400 con
 `{ falta: { CALLBELL_API_KEY: true } }` ahorra horas frente a una prueba que se
-creó y «no hizo nada».
+creó y «no hizo nada». Desde ADR 0028 la función es
+`faltaParaEnviarCallbell()` y el que decide a quién preguntarle vive en
+[`transporte.ts`](#transportets).
 
 `llaveCallbell()` es la llave **normalizada**, y el header no lee `process.env`:
 lo lee de acá. El panel de Callbell muestra el token ya escrito como cabecera
@@ -183,12 +225,19 @@ De qué número escribimos. Vive en `smoke_channels` y no en variables de entorn
 porque lo cambia alguien de operaciones sin desplegar. La llave de la API sí es
 variable: eso es un secreto, esto es un dato.
 
+**El orden es `prioridad` y el menor gana**, con `created_at` de desempate. Hasta
+0018 era `created_at` a secas, que con un solo proveedor era exactamente
+correcto; con dos, la antigüedad de la fila es un accidente del día que se cargó.
+Y `channel_uuid` guarda el `channel_uuid` de Callbell **o el `device` de wzap**,
+según el proveedor de la fila.
+
 ```ts
-enviarMensaje(spec: EnvioSpec): Promise<ResultadoEnvio>
+enviarPorCallbell(spec: EnvioSpec): Promise<ResultadoEnvio>
 // → { ok, messageId, error, pista }
 ```
 
-**Nunca lanza.** Devuelve `pista`, que es un texto accionable («Callbell rechazó
+Se llama a través de `enviarMensaje()` de [`transporte.ts`](#transportets), nunca
+directo. **Nunca lanza.** Devuelve `pista`, que es un texto accionable («Callbell rechazó
 la llave. Revisá CALLBELL_API_KEY»), no el error crudo. Es lo que hace que el
 que ve el problema no necesite acceso a los logs.
 
@@ -259,6 +308,74 @@ conversación viva contra el mismo negocio. Se busca en `channel_uuid`,
 profundidad 3, porque la aplicación que reenvía usa una forma distinta de la de
 Callbell. Devuelve `null` sin drama: la desambiguación tiene otro camino y no
 puede depender de que el proveedor no cambie nunca el nombre del campo.
+
+---
+
+## `wzap.ts`
+
+El segundo transporte. `POST https://api.wzap.chat/v1/messages`, cabecera
+`Token: <llave>` **sin prefijo**.
+
+El contrato de acá no salió de la documentación del proveedor —pide sesión— sino
+de tres llamadas contra la API real, y la tabla de cómo se verificó está en
+[ADR 0028](../adr/0028-dos-transportes.md).
+
+```ts
+llaveWzap(): string | null
+faltaParaEnviarWzap(): Record<string, true>
+```
+
+`llaveWzap()` le saca el prefijo `Token ` a la variable, por el mismo incidente
+que `llaveCallbell()` con `Bearer`: el panel muestra el secreto ya escrito como
+cabecera y así es como se copia. Con el prefijo adentro el header sale
+`Token Token …` y la API contesta 401, indistinguible de una llave vencida.
+
+```ts
+enviarPorWzap(spec: { canal, to, texto }): Promise<ResultadoEnvioWzap>
+```
+
+**Falla antes de tocar la red si el canal no trae `device`.** No es una guarda de
+tipos: el `device` es opcional en la API de wzap, y omitirlo hace que el proveedor
+elija la línea. La misma llave ve **todas** las líneas de la cuenta, incluidas las
+de otros negocios — en la cuenta con la que se puso esto en marcha había cuatro
+devices y tres eran líneas de atención reales. Un POST sin `device` es un mensaje
+de prueba saliendo desde la línea de un cliente.
+
+Las pistas se derivan del `errorCode` que devuelve wzap (`phone:invalid`,
+`device:invalid`) y no solo del status, que es lo que las hace accionables.
+
+```ts
+parsearEntranteWzap(raw: unknown): Entrante | null
+```
+
+Devuelve el **mismo** `Entrante` que el parser de Callbell, así que
+`correlacionar()` no sabe de proveedores. Dos diferencias que importan:
+
+- **La dirección sale del nombre del evento** (`message:in:new` contra
+  `message:out:new`), no de la ausencia de un campo. Es la peor adivinanza del
+  parser de Callbell y acá no existe.
+- **`canalUuid` sale del `device`**, que es lo que `smoke_channels.channel_uuid`
+  guarda para las filas de wzap. Así la desambiguación por línea de
+  [`webhook.ts`](#webhookts) sigue funcionando sin cambios.
+
+Devuelve `null` si no reconoce la forma, y la ruta cae al parser genérico de
+Callbell dejando un `warn` en el log. Eso es deliberado: la forma exacta del
+payload no está verificada contra un mensaje real todavía, y perder un entrante
+en silencio cuelga la conversación y reporta al negocio como «no contestó» — una
+cifra falsa en el informe de un cliente.
+
+```ts
+resumirPayloadWzap(raw: unknown): Record<string, unknown>
+pistasDeBotones(raw: unknown): string[]
+```
+
+`pistasDeBotones()` devuelve qué claves del payload huelen a mensaje interactivo
+(`buttons`, `listMessage`, `interactive`, `sections`…). **No clasifica, no puntúa
+y no escribe nada**: solo deja en el log si el puente de wzap nos entrega la
+estructura de un mensaje con botones o si la aplana a texto. Es la pregunta que
+originó ADR 0028 y todavía no tiene respuesta — un menú que llega como texto
+plano y uno que llega con sus opciones adentro se ven idénticos en la
+transcripción. Cuando haya payloads reales, qué hacer con esto va en otro ADR.
 
 ---
 
@@ -865,7 +982,8 @@ verifica a mano con el procedimiento de
 | `/api/admin/pruebas/canales` | POST / DELETE | Nuestras líneas. El DELETE apaga, no borra: las conversaciones viejas apuntan al canal con una clave foránea |
 | `/api/admin/pruebas/diagnose` | GET / POST | Qué variables faltan · mandar un mensaje de prueba desde una línea |
 | `/api/pruebas/estado/[runId]` | GET | El estado en vivo **y la red de seguridad real** del motor |
-| `/api/webhooks/callbell` | POST | La entrada de todo. **Siempre devuelve 200** |
+| `/api/webhooks/wzap` | POST | La entrada de wzap. Secreto en la cabecera `x-webhook-secret`. **Siempre devuelve 200** |
+| `/api/webhooks/callbell` | POST | La entrada de Callbell. Secreto en `?k=`. **Siempre devuelve 200** |
 
 `POST /api/admin/pruebas/lotes` **ya no existe**. Era el segundo camino de
 creación y era la mitad de la confusión; hay una prueba que verifica que no

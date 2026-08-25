@@ -1,7 +1,8 @@
 import { db, mustWrite, tryWrite, unwrap } from '@/lib/supabase/admin';
 import { track } from '@/lib/events';
 import { authorize } from '@/lib/governance/authorize';
-import { canalActivo, canalesActivos, hayTransporte } from '@/lib/pruebas/callbell';
+import { canalActivo, canalesActivos } from '@/lib/pruebas/callbell';
+import { faltaParaLineas } from '@/lib/pruebas/transporte';
 import {
   compilarPrueba,
   contextoDelNegocio,
@@ -156,14 +157,19 @@ export async function crearLote(args: {
     error,
   });
 
-  if (!hayTransporte()) return vacio('Falta CALLBELL_API_KEY.');
-
   // ── 1 · desde qué líneas ───────────────────────────────────────────────
   const canales = await resolverCanales(args.canales);
   if (canales.length === 0) {
     return vacio(
       'No hay ninguna línea activa desde la que escribir. Configurá una en «Nuestras líneas».',
     );
+  }
+
+  // Qué falta se pregunta DESPUÉS de saber por dónde va a salir el lote: cada
+  // proveedor tiene su propia llave, y abortar por la del otro sería mentir.
+  const falta = Object.keys(faltaParaLineas(canales));
+  if (falta.length > 0) {
+    return vacio(`Falta ${falta.join(', ')} para las líneas elegidas.`);
   }
 
   // ── 2 · qué se manda ──────────────────────────────────────────────────

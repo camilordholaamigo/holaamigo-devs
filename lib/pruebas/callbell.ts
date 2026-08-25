@@ -2,7 +2,14 @@ import { db, unwrap } from '@/lib/supabase/admin';
 import type { CanalRow } from '@/lib/pruebas/types';
 
 /**
- * El transporte: cómo le hablamos a la línea bajo prueba.
+ * El transporte de Callbell: cómo le hablamos a la línea bajo prueba.
+ *
+ * Ya no es el único. Desde ADR 0028 hay dos proveedores y quien elige es
+ * `lib/pruebas/transporte.ts`, leyendo `canal.provider`. Este archivo sabe de
+ * Callbell y de nada más; lo que quedó acá y es de todos —la lectura de la tabla
+ * de canales, el parser tolerante de entrantes, `describirFalloDeRed()`— se
+ * quedó porque moverlo habría tocado el camino que hoy corre en producción sin
+ * arreglar nada.
  *
  * Es la pieza más chica del smoke tester y la que más define el diseño. Es
  * **asíncrona**: mandamos un HTTP a Callbell, Callbell lo pone en cola, el
@@ -49,14 +56,10 @@ export function llaveCallbell(): string | null {
   return raw.replace(/^bearer\s+/i, '').trim() || null;
 }
 
-export function faltaParaEnviar(): Record<string, true> {
+export function faltaParaEnviarCallbell(): Record<string, true> {
   const falta: Record<string, true> = {};
   if (!llaveCallbell()) falta.CALLBELL_API_KEY = true;
   return falta;
-}
-
-export function hayTransporte(): boolean {
-  return Object.keys(faltaParaEnviar()).length === 0;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -71,15 +74,26 @@ export function hayTransporte(): boolean {
  * /admin/pruebas, sin desplegar. La llave de la API sí es una variable: eso es
  * un secreto, esto es un dato de operación (ADR 0014).
  */
+const COLUMNAS_CANAL =
+  'id, label, provider, phone_e164, channel_uuid, template_uuid, prioridad, activo, notas';
+
+// El orden de preferencia es `prioridad` y el menor gana; `created_at` desempata
+// para que nunca dependa de cómo Postgres devuelva las filas.
+//
+// Hasta 0018 era `created_at` a secas, y con un solo proveedor era exactamente
+// correcto. Con dos, la antigüedad de la fila es un accidente del día que se
+// cargó: cuál línea usa el camino automático es una decisión de operación, y
+// `prioridad` es la columna donde se escribe (ADR 0028).
+
 export async function canalActivo(canalId?: string | null): Promise<CanalRow | null> {
-  let q = db()
-    .from('smoke_channels')
-    .select('id, label, provider, phone_e164, channel_uuid, template_uuid, activo, notas')
-    .eq('activo', true);
+  let q = db().from('smoke_channels').select(COLUMNAS_CANAL).eq('activo', true);
 
   if (canalId) q = q.eq('id', canalId);
 
-  const { data } = await q.order('created_at', { ascending: true }).limit(1);
+  const { data } = await q
+    .order('prioridad', { ascending: true })
+    .order('created_at', { ascending: true })
+    .limit(1);
   return (data?.[0] as CanalRow | undefined) ?? null;
 }
 
@@ -95,19 +109,16 @@ export async function canalActivo(canalId?: string | null): Promise<CanalRow | n
 export async function canalesActivos(): Promise<CanalRow[]> {
   const { data } = await db()
     .from('smoke_channels')
-    .select('id, label, provider, phone_e164, channel_uuid, template_uuid, activo, notas')
+    .select(COLUMNAS_CANAL)
     .eq('activo', true)
+    .order('prioridad', { ascending: true })
     .order('created_at', { ascending: true });
   return (data ?? []) as CanalRow[];
 }
 
 export async function canalPorId(canalId: string): Promise<CanalRow> {
   return unwrap(
-    await db()
-      .from('smoke_channels')
-      .select('id, label, provider, phone_e164, channel_uuid, template_uuid, activo, notas')
-      .eq('id', canalId)
-      .single(),
+    await db().from('smoke_channels').select(COLUMNAS_CANAL).eq('id', canalId).single(),
     'smoke_channels.get',
   ) as CanalRow;
 }
@@ -140,8 +151,8 @@ export interface EnvioSpec {
   usarPlantilla?: boolean;
 }
 
-export async function enviarMensaje(spec: EnvioSpec): Promise<ResultadoEnvio> {
-  const falta = faltaParaEnviar();
+export async function enviarPorCallbell(spec: EnvioSpec): Promise<ResultadoEnvio> {
+  const falta = faltaParaEnviarCallbell();
   if (Object.keys(falta).length > 0) {
     const nombres = Object.keys(falta).join(', ');
     return {

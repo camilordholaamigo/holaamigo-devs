@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { db, explainDbError } from '@/lib/supabase/admin';
 import { env, hasOpenAI, hasSupabase } from '@/lib/env';
 import { currentAdmin } from '@/lib/auth/admin';
+import { llaveWzap } from '@/lib/pruebas/wzap';
 
 /**
  * GET /api/health — ¿esto está bien configurado?
@@ -496,6 +497,45 @@ export async function GET(request: Request) {
           : 'correr 0014_smoke_tester.sql → 0015_lotes_e_informes.sql → 0016_la_prueba_no_la_gobierna_el_plan.sql → 0017_prueba_a_medida.sql',
     });
 
+    // ── db:v12 · el segundo transporte ──────────────────────────────────
+    //
+    // Tres cosas, y las tres son «se corrió el SQL nuevo»: la columna de
+    // preferencia existe, el `check` del proveedor acepta wzap, y hay una línea
+    // de wzap cargada. La tercera es la que importa en operación: sin ella el
+    // camino automático sigue saliendo por Callbell y nadie se enteraría.
+    const v12: string[] = [];
+
+    const { data: preferida, error: errorPrioridad } = await db()
+      .from('smoke_channels')
+      .select('label, provider, prioridad, activo')
+      .eq('activo', true)
+      .order('prioridad', { ascending: true })
+      .order('created_at', { ascending: true })
+      .limit(1);
+
+    if (errorPrioridad) v12.push(`smoke_channels.prioridad no existe (${errorPrioridad.code})`);
+
+    const { count: lineasWzap } = await db()
+      .from('smoke_channels')
+      .select('id', { count: 'exact', head: true })
+      .eq('provider', 'wzap');
+
+    if ((lineasWzap ?? 0) === 0) v12.push('ninguna línea de wzap cargada');
+
+    const laPrimera = preferida?.[0] as
+      | { label: string; provider: string; prioridad: number }
+      | undefined;
+
+    checks.push({
+      name: 'db:v12',
+      ok: v12.length === 0,
+      detail:
+        v12.length === 0
+          ? `wzap disponible; la línea preferida es «${laPrimera?.label}» (${laPrimera?.provider}, prioridad ${laPrimera?.prioridad})`
+          : `problemas: ${v12.join(', ')}`,
+      fix: v12.length === 0 ? undefined : 'correr 0018_wzap_como_transporte.sql',
+    });
+
     // El seed del quiz: sin preguntas fijas el quiz arranca vacío y el
     // diagnóstico sale sin la cifra de fuga, que es el producto entero.
     const { count } = await db()
@@ -510,6 +550,18 @@ export async function GET(request: Request) {
       fix: (count ?? 0) >= 6 ? undefined : 'correr 0002_seed_quiz.sql',
     });
   }
+
+  // El transporte preferido del smoke tester. No bloquea: sin la llave el
+  // subsistema degrada a Callbell, que es exactamente por qué se conservan los
+  // dos (ADR 0028). Pero el que mira esto buscando por qué no salió un mensaje
+  // necesita ver la variable antes de revisar la línea.
+  checks.push({
+    name: 'env:wzap',
+    ok: Boolean(llaveWzap()),
+    detail: llaveWzap()
+      ? 'wzap puede mandar'
+      : 'sin WZAP_API_KEY: las líneas de wzap no mandan y el smoke tester cae a Callbell',
+  });
 
   // ── 4 · Correo (opcional: degrada, no rompe) ────────────────────────────
   checks.push({

@@ -5,7 +5,7 @@ import { LineasDeCallbell } from '@/components/pruebas-admin';
 import { EnviarInforme } from '@/components/informe-admin';
 import { estadoDelLote, lotesRecientes } from '@/lib/pruebas/lote';
 import { informesRecientes } from '@/lib/pruebas/informe';
-import { faltaParaEnviar } from '@/lib/pruebas/callbell';
+import { faltaParaLineas } from '@/lib/pruebas/transporte';
 import { plantillasActivas } from '@/lib/pruebas/compilar';
 import { formatoDuracion } from '@/lib/pruebas/motor';
 import { isoDaysAgo } from '@/lib/utils';
@@ -89,9 +89,15 @@ export default async function PruebasPage() {
         .order('created_at', { ascending: false })
         .limit(40),
       plantillasActivas(),
+      // En orden de preferencia y no de creación: la primera activa de esta
+      // lista es la que usa el camino automático, y la pantalla lo dice
+      // (ADR 0028).
       db()
         .from('smoke_channels')
-        .select('id, label, provider, phone_e164, channel_uuid, template_uuid, activo, notas')
+        .select(
+          'id, label, provider, phone_e164, channel_uuid, template_uuid, prioridad, activo, notas',
+        )
+        .order('prioridad')
         .order('created_at'),
       lotesRecientes(8),
       informesRecientes(12),
@@ -99,8 +105,8 @@ export default async function PruebasPage() {
 
   const filas = (resumen ?? []) as FilaResumen[];
   const conversaciones = (crudas ?? []) as unknown as FilaConversacion[];
-  const falta = Object.keys(faltaParaEnviar());
   const lineas = (canales ?? []) as CanalRow[];
+  const falta = Object.keys(faltaParaLineas(lineas));
   const activas = lineas.filter((c) => c.activo);
 
   // El estado de cada prueba sale de la función de SQL, una por lote y en
@@ -419,9 +425,11 @@ export default async function PruebasPage() {
         <div>
           <h2 className="text-[17px] font-semibold tracking-tight text-ink">Nuestras líneas</h2>
           <p className="mt-1 max-w-3xl text-[13px] leading-relaxed text-ink-faint">
-            Los números desde los que escribimos, y su identificador en Callbell. Se cambian acá y
+            Los números desde los que escribimos, su proveedor y su identificador —el{' '}
+            <code>device</code> en wzap, el <code>channel_uuid</code> en Callbell. Se cambian acá y
             toman efecto sin desplegar; la llave de la API va en Vercel porque eso es un secreto y
-            esto es un dato de operación. <strong>Tener varias líneas es la unidad de escala:</strong>{' '}
+            esto es un dato de operación. La de <strong>prioridad</strong> más baja es la que usa el
+            camino automático. <strong>Tener varias líneas es la unidad de escala:</strong>{' '}
             cada una abre su propio hilo de WhatsApp, así que tres líneas permiten ver si el agente
             de un negocio les contesta igual a tres clientes a la vez — y suben el techo diario sin
             acercarse al umbral de spam de Meta.
@@ -477,13 +485,24 @@ export default async function PruebasPage() {
               El webhook
             </p>
             <p className="text-[13px] leading-relaxed text-ink-soft">
-              Callbell —o la aplicación que reenvía— tiene que mandar las respuestas a{' '}
+              Una entrada por proveedor, y cada una solo entiende a su proveedor. En wzap:
+              webhook nuevo con evento <code>message:in:new</code>, el device de la línea, y{' '}
+              <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-[12px] text-ink">
+                {env.siteUrl}/api/webhooks/wzap
+              </code>
+              {process.env.WZAP_WEBHOOK_SECRET ? (
+                <>
+                  {' '}
+                  con la cabecera <code>x-webhook-secret</code>
+                </>
+              ) : null}
+              . En Callbell —o en la aplicación que reenvía—{' '}
               <code className="rounded bg-paper-sunken px-1.5 py-0.5 text-[12px] text-ink">
                 {env.siteUrl}/api/webhooks/callbell
                 {process.env.CALLBELL_WEBHOOK_SECRET ? '?k=…' : ''}
               </code>
-              . El <code>GET</code> de esa misma URL devuelve <code>{'{ok: true}'}</code> si el
-              secreto es correcto.
+              . El <code>GET</code> de cualquiera de las dos devuelve{' '}
+              <code>{'{ok: true}'}</code> si el secreto es correcto.
             </p>
           </div>
         </Card>
