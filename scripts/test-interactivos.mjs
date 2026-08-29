@@ -54,7 +54,8 @@ check(
 
 // Node 24 ejecuta TypeScript directo borrando los tipos. Se importa el archivo
 // REAL y no una copia transpilada a mano: una copia prueba la copia.
-const { extraerInteractivo, conOpciones, elegirOpcion, opcionesDelTexto } = await import(
+const { extraerInteractivo, conOpciones, elegirOpcion, opcionesDelTexto, repiteLoMismo } =
+  await import(
   pathToFileURL(join(raiz, 'lib', 'pruebas', 'interactivos.ts')).href
 );
 
@@ -317,6 +318,71 @@ check('sin opciones, devuelve la respuesta tal cual', elegirOpcion('hola', []) =
 check(
   'un número fuera de rango no elige nada',
   elegirOpcion('9', ops) === '9',
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4.5 · EL BUCLE DE AMERICANINO — prueba 2699ffec, 2026-08-29
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// El caso que costó una prueba entera. El menú era `[1] Si [2] No`, el comprador
+// contestó «Sí acepto. Me recomendás una camiseta…» y el bot respondió «Por
+// favor elige solo una de las opciones» ocho veces seguidas, hasta agotar los
+// diez turnos. Cero información sobre el negocio.
+//
+// Dos defensas, y hacen falta las dos: que la respuesta del modelo se pueda
+// mapear a una opción corta, y que si igual se traba, la prueba corte.
+
+console.log('\n\x1b[1mEl bucle de Americanino\x1b[0m');
+
+const consentimiento = [
+  { id: null, texto: 'Si', origen: 'transcripcion' },
+  { id: null, texto: 'No', origen: 'transcripcion' },
+];
+
+check(
+  '«Sí acepto. Me recomendás una camiseta…» elige «Si»',
+  elegirOpcion('Sí acepto. Me recomendás una camiseta que vaya con ese jean?', consentimiento) ===
+    'Si',
+  'antes no matcheaba: el piso de 4 caracteres dejaba afuera las opciones cortas',
+);
+check(
+  '«Sí, cuánto cuestan…» elige «Si»',
+  elegirOpcion('Sí, cuánto cuestan el jean y la camiseta?', consentimiento) === 'Si',
+);
+check('«No gracias» elige «No»', elegirOpcion('No gracias', consentimiento) === 'No');
+check(
+  'una frase que solo CONTIENE «no» no elige «No»',
+  elegirOpcion('Quiero saber si no tienen talla 30', consentimiento) !==
+    'No',
+  'sin el piso de 4, «no» matchearía media conversación',
+);
+check(
+  'las opciones largas siguen funcionando por contención',
+  elegirOpcion('quiero realizar una compra', [
+    { id: null, texto: 'Realizar una compra', origen: 't' },
+    { id: null, texto: 'AMCNO CLUB', origen: 't' },
+  ]) === 'Realizar una compra',
+);
+
+check(
+  'tres mensajes idénticos del negocio se detectan',
+  repiteLoMismo(
+    [
+      'Hola',
+      'Por favor elige solo una de las opciones.',
+      'Por favor elige solo una de las opciones.',
+      'Por favor elige solo una de las opciones.',
+    ],
+    3,
+  ),
+);
+check(
+  'dos idénticos y uno distinto NO se detectan',
+  !repiteLoMismo(['Por favor elige.', 'Por favor elige.', 'Claro, te cuento'], 3),
+);
+check(
+  'un cambio de emoji o espacio no los vuelve mensajes distintos',
+  repiteLoMismo(['Por favor elige.', 'Por favor  elige!', 'Por favor elige'], 3),
 );
 
 // ═══════════════════════════════════════════════════════════════════════════

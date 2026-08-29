@@ -3,7 +3,7 @@ import { db, unwrap, mustWrite, tryWrite } from '@/lib/supabase/admin';
 import { track } from '@/lib/events';
 import { canalPorId } from '@/lib/pruebas/callbell';
 import { enviarMensaje } from '@/lib/pruebas/transporte';
-import { elegirOpcion, opcionesDelTexto } from '@/lib/pruebas/interactivos';
+import { elegirOpcion, opcionesDelTexto, repiteLoMismo } from '@/lib/pruebas/interactivos';
 import { siguienteTurno } from '@/lib/pruebas/comprador';
 import { auditar } from '@/lib/pruebas/auditor';
 import {
@@ -260,6 +260,33 @@ export async function avanzarTurno(pruebaId: string, token: string): Promise<voi
           cierre === 'agendado'
             ? 'El negocio propuso o confirmó una cita.'
             : 'El negocio ofreció enviar una cotización.',
+      });
+      return;
+    }
+
+    // ── EL NEGOCIO SE TRABÓ ──────────────────────────────────────────────
+    //
+    // Un bot de menú que no entiende una respuesta escrita reenvía su menú
+    // idéntico, para siempre. Sin este corte la prueba le contesta hasta agotar
+    // los turnos: contra Americanino fueron ocho repeticiones de «Por favor
+    // elige solo una de las opciones», diez turnos quemados y una prueba
+    // marcada como fallida — que se lee como si algo nuestro se hubiera roto.
+    //
+    // Se cierra como `incompleto`, que es lo que fue, y el motivo dice qué pasó.
+    // Eso no es una derrota: «el menú no admite respuesta escrita» es un
+    // hallazgo sobre la atención de ese negocio, y perderlo entre diez mensajes
+    // repetidos es perder la única cosa que la prueba averiguó.
+    const delNegocio = prueba.conversation
+      .filter((m) => m.role === 'negocio')
+      .map((m) => m.text);
+
+    if (repiteLoMismo(delNegocio, 3)) {
+      await cerrarPrueba(pruebaId, {
+        estado: 'completed',
+        cerroCon: 'incompleto',
+        motivo:
+          'El negocio repitió el mismo mensaje tres veces sin avanzar. Es un menú ' +
+          'automático que no acepta respuesta escrita.',
       });
       return;
     }

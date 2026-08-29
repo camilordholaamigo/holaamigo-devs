@@ -8,6 +8,53 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.14.0] — 2026-08-29 · El comprador aprende a elegir del menú
+
+La prueba `2699ffec` contra el bot de Americanino terminó **fallida** con diez
+turnos quemados y cero información sobre el negocio. La transcripción:
+
+```
+[negocio]   Para ofrecerte la mejor experiencia… ¿aceptas el tratamiento de datos?
+            [1] Si   [2] No
+[comprador] Sí acepto. Me recomiendas una camiseta que vaya con ese jean?
+[negocio]   Por favor elige solo una de las opciones.  [1] Si  [2] No
+[comprador] Sí, me recomiendas una camiseta que combine…
+[negocio]   Por favor elige solo una de las opciones.  [1] Si  [2] No
+            … ocho veces …
+```
+
+Tres causas encadenadas, y hacían falta las tres para producir esto.
+
+### Arreglado
+
+1. **El comprador no sabía que existía el menú.** Las opciones se le mostraban
+   dentro del hilo desde 3.13.0, pero nada le decía que ahí había que contestar
+   distinto. Ahora, cuando el último bloque del negocio trae opciones, las
+   instrucciones terminan con el menú y una orden explícita: *contestá solo con
+   el texto exacto de una opción*. Va **al final** —lo último que lee el modelo,
+   que es donde más pesa— y no aparece cuando no hay menú.
+
+2. **`elegirOpcion()` no podía rescatar opciones cortas.** El modelo contestaba
+   «Sí acepto. Me recomendás…» y el piso de 4 caracteres de la contención dejaba
+   afuera a «Si» y a «No» — que son justo las que traban un menú de
+   consentimiento. Se agregaron dos pasos antes: **la primera cláusula** y **la
+   primera palabra**. El piso de 4 se queda para la contención, y se queda por lo
+   mismo de siempre: sin él, «No» matchearía media conversación.
+
+3. **Nada cortaba el bucle.** Un bot de menú que no entiende texto libre reenvía
+   su menú idéntico para siempre. Ahora, tres mensajes iguales seguidos del
+   negocio cierran la prueba como `incompleto` con el motivo escrito: *«es un
+   menú automático que no acepta respuesta escrita»*. Eso no es una derrota —
+   es un hallazgo sobre la atención de ese negocio, y perderlo entre diez
+   mensajes repetidos es perder lo único que la prueba averiguó. La comparación
+   es normalizada porque algunos bots cambian un emoji entre repeticiones.
+
+### Cómo desplegarlo
+
+Solo código, sin migración.
+
+---
+
 ## [3.13.1] — 2026-08-29 · La primera lista real
 
 Llegó el primer `list` entrante de verdad —el bot de Americanino, contra la

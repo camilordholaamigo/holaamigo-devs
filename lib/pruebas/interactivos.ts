@@ -387,12 +387,53 @@ export function elegirOpcion(respuesta: string, opciones: OpcionInteractiva[]): 
   const exacta = opciones.find((o) => normalizar(o.texto) === normal);
   if (exacta) return exacta.texto;
 
+  // ── LA PRIMERA CLÁUSULA ────────────────────────────────────────────────
+  //
+  // El modelo casi nunca contesta «Si» pelado: contesta «Sí acepto. Y de paso,
+  // ¿me recomendás una camiseta?». La opción elegida es la primera cláusula y el
+  // resto es la pregunta que quería hacer igual.
+  //
+  // Esto no es cosmética. Contra el bot de Americanino (prueba 2699ffec) el menú
+  // era `[1] Si [2] No`, el comprador contestó así ocho veces, y el bot repitió
+  // «Por favor elige solo una de las opciones» las ocho, hasta agotar los turnos
+  // y dar la prueba por fallida. Cero información sobre el negocio.
+  const primeraClausula = normalizar(dicho.split(/[.,;?!\n]/)[0] ?? '');
+  const porClausula = opciones.find((o) => normalizar(o.texto) === primeraClausula);
+  if (porClausula) return porClausula.texto;
+
+  // ── LA PRIMERA PALABRA ─────────────────────────────────────────────────
+  //
+  // Rescata las opciones cortas —«Si», «No»—, que son justo las que más
+  // importan porque son las que traban un menú de consentimiento. La contención
+  // de abajo no las puede mirar: «no» aparece adentro de media conversación.
+  const primeraPalabra = primeraClausula.split(' ')[0] ?? '';
+  const porPalabra = opciones.find((o) => normalizar(o.texto) === primeraPalabra);
+  if (porPalabra) return porPalabra.texto;
+
   // Contención: el modelo escribió «quiero arrendar» y la opción es «Arrendar».
+  // El piso de 4 caracteres sigue, y sigue por lo mismo: sin él, la opción «No»
+  // matchearía cualquier frase que contenga «no».
   const contenida = opciones.find((o) => {
     const n = normalizar(o.texto);
     return n.length >= 4 && (normal.includes(n) || n.includes(normal));
   });
   return contenida ? contenida.texto : dicho;
+}
+
+/**
+ * ¿El negocio está repitiendo el mismo mensaje?
+ *
+ * Un bot de menú que no entiende una respuesta escrita reenvía su menú idéntico,
+ * y sin esto la prueba le contesta hasta agotar los turnos: diez mensajes, cero
+ * información sobre el negocio y una prueba marcada como fallida (2699ffec).
+ *
+ * Se compara normalizado porque algunos bots cambian un emoji o un espacio entre
+ * repeticiones, y eso no las vuelve mensajes distintos.
+ */
+export function repiteLoMismo(mensajesDelNegocio: string[], veces = 2): boolean {
+  if (mensajesDelNegocio.length < veces) return false;
+  const ultimos = mensajesDelNegocio.slice(-veces).map(normalizar);
+  return ultimos.every((m) => m.length > 0 && m === ultimos[0]);
 }
 
 function normalizar(s: string): string {

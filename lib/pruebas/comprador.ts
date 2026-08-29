@@ -5,6 +5,7 @@ import { hasOpenAI } from '@/lib/env';
 import { blanquearCifras } from '@/lib/playbook/compile';
 import { cifrasDelPlan } from '@/lib/pruebas/guion';
 import type { Mensaje, PlanDePrueba } from '@/lib/pruebas/types';
+import { opcionesDelTexto } from '@/lib/pruebas/interactivos';
 
 /**
  * El comprador sintético: el otro lado de la conversación.
@@ -155,10 +156,61 @@ function armarInstrucciones(plan: PlanDePrueba, conversation: Mensaje[], turno: 
     '',
     'LA CONVERSACIÓN HASTA AHORA:',
     hilo || '(todavía no has escrito nada)',
+    // ── EL MENÚ VA AL FINAL, Y ES A PROPÓSITO ──────────────────────────
+    //
+    // Es la última cosa que lee el modelo antes de escribir, que es donde más
+    // pesa. Arriba, entre la identidad y las sondas, se diluye — y ya sabemos
+    // qué pasa cuando se diluye porque pasó: contra el bot de Americanino
+    // (prueba 2699ffec) el menú era `[1] Si [2] No`, el comprador contestó
+    // «Sí acepto. Me recomendás una camiseta…» ocho veces, y el bot repitió
+    // «Por favor elige solo una de las opciones» las ocho. Diez turnos
+    // quemados, prueba fallida, cero información sobre el negocio.
+    instruccionDeMenu(conversation),
   ]
     .filter((l) => l !== '')
     .join('\n')
     .slice(0, 20_000);
+}
+
+/**
+ * Qué decirle al modelo cuando el negocio puso un menú sobre la mesa.
+ *
+ * Devuelve cadena vacía —o sea, nada— cuando el último mensaje del negocio no
+ * trae opciones, que es el caso normal. Esa es la regla: el comprador escribe
+ * libre salvo que del otro lado haya un menú, porque un menú de WhatsApp no
+ * entiende texto libre y contestarle con una frase traba la conversación.
+ */
+function instruccionDeMenu(conversation: Mensaje[]): string {
+  // El bloque del negocio se recalcula acá en vez de importarlo de `motor.ts`,
+  // que ya importa este archivo: el ciclo compila hoy y explota el día que
+  // alguien mueva un import de lugar. Son tres líneas y no vuelven a mirarse.
+  const bloque: string[] = [];
+  for (let i = conversation.length - 1; i >= 0; i -= 1) {
+    if (conversation[i].role !== 'negocio') break;
+    bloque.unshift(conversation[i].text);
+  }
+
+  const opciones = opcionesDelTexto(bloque.join('\n'));
+  if (opciones.length === 0) return '';
+
+  const lista = opciones.map((o, i) => `[${i + 1}] ${o.texto}`).join('\n');
+
+  return [
+    '',
+    'ATENCIÓN — EL NEGOCIO TE ESTÁ OFRECIENDO UN MENÚ:',
+    lista,
+    '',
+    'Contestá SOLO con el texto exacto de UNA opción, o con su número. Nada más:',
+    'ni saludo, ni una pregunta pegada atrás, ni una explicación.',
+    '',
+    'Del otro lado hay un bot que no lee texto libre. Si escribís cualquier otra',
+    'cosa te va a repetir el mismo menú y la conversación no avanza: se agotan los',
+    'turnos sin averiguar nada del negocio, que es la única forma de que esta',
+    'prueba no sirva para nada.',
+    '',
+    'Si ninguna opción te lleva a tu objetivo, elegí la que más se acerque. Lo que',
+    'querías preguntar lo vas a poder preguntar en el mensaje siguiente.',
+  ].join('\n');
 }
 
 /** ¿Ya se hizo esta pregunta? Comparación laxa: importa el tema, no la forma. */
