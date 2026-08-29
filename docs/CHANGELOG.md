@@ -8,6 +8,39 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.13.1] — 2026-08-29 · La primera lista real
+
+Llegó el primer `list` entrante de verdad —el bot de Americanino, contra la
+línea de pruebas— y enseñó tres cosas que ningún ejemplo inventado tenía. Está
+guardado en `scripts/fixtures/wzap-list-inbound.json` (sin el contacto ni el
+chat, que son datos de una persona) y la suite corre contra él.
+
+### Arreglado
+
+- **`body` no viene `null`: viene AUSENTE.** El caso ya estaba cubierto, pero
+  ahora está fijado con el payload real y no con uno supuesto.
+- **El encabezado y la pregunta son campos distintos.** La lista trae
+  `title: "Menú inicial"` y `description: "¿Cómo puedo ayudarte ?"`, y WhatsApp
+  muestra las dos. `enunciadoDe()` se quedaba con la primera y tiraba la
+  pregunta, que es justo lo que el modelo necesita para elegir bien y lo que
+  después se lee en la transcripción de un informe. Ahora junta las dos.
+- **`button` ya no entra en el enunciado.** Es la etiqueta que abre la lista
+  («Elige una opción:»); suelta arriba de las opciones se lee como si fuera una
+  instrucción nuestra.
+- **Los `id` de fila se acotan a 64 caracteres.** En el payload real cada uno es
+  un JSON de 130 con el intent del rule builder adentro. No se usan para nada
+  —no se puede contestar por id— y enteros meten medio kilobyte de basura en
+  cada turno.
+
+### Cómo desplegarlo
+
+Solo código, sin migración. Pero **el webhook de wzap sigue sin existir**: en la
+cuenta hay tres y los tres apuntan a Bubble o al proyecto viejo. El mensaje de
+Americanino llegó a wzap a las 20:54:15Z, se repartió a esos tres, y este
+proyecto nunca lo vio — por eso la prueba quedó en «todavía no contestan».
+
+---
+
 ## [3.13.0] — 2026-08-29 · Los mensajes con opciones
 
 ADR 0028 dejó una pregunta abierta y dijo que solo se podía responder con

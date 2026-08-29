@@ -54,7 +54,7 @@ check(
 
 // Node 24 ejecuta TypeScript directo borrando los tipos. Se importa el archivo
 // REAL y no una copia transpilada a mano: una copia prueba la copia.
-const { extraerInteractivo, conOpciones, elegirOpcion } = await import(
+const { extraerInteractivo, conOpciones, elegirOpcion, opcionesDelTexto } = await import(
   pathToFileURL(join(raiz, 'lib', 'pruebas', 'interactivos.ts')).href
 );
 
@@ -187,6 +187,62 @@ const botones = {
 const r4 = extraerInteractivo(botones);
 check('lee `buttons` entrantes', r4.opciones.length === 2, `dio ${r4.opciones.length}`);
 check('usa el body como enunciado', (r4.texto ?? '').includes('Elegí una'));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 3.4 · LA LISTA REAL — el bot de Americanino, 2026-08-29
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// El primer `list` entrante de verdad, guardado tal cual llegó (sin el contacto
+// ni el chat, que son datos de una persona). Es el que enseñó tres cosas que
+// ningún ejemplo inventado tenía:
+//
+//   1. `body` no viene null: viene AUSENTE.
+//   2. El encabezado y la pregunta son campos distintos, `title` y
+//      `description`, y quedarse con el primero tira la pregunta.
+//   3. Cada `id` de fila es un JSON de 130 caracteres con el intent del rule
+//      builder adentro.
+
+console.log('\n\x1b[1mLa lista real (Americanino)\x1b[0m');
+
+const listaReal = JSON.parse(
+  await readFile(join(raiz, 'scripts', 'fixtures', 'wzap-list-inbound.json'), 'utf8'),
+);
+
+const r7 = extraerInteractivo(listaReal);
+check('`body` está ausente, no null', !('body' in listaReal));
+check('reconoce la clase `list`', r7.clase === 'list', `dio ${r7.clase}`);
+check('saca las cuatro filas', r7.opciones.length === 4, `dio ${r7.opciones.length}`);
+check(
+  'el enunciado lleva el encabezado Y la pregunta',
+  (r7.texto ?? '').includes('Menú inicial') && (r7.texto ?? '').includes('¿Cómo puedo ayudarte'),
+  `dio ${JSON.stringify(r7.texto)}`,
+);
+check(
+  'NO mete la etiqueta del botón («Elige una opción:») en el enunciado',
+  !(r7.texto ?? '').includes('Elige una opción'),
+  'es el rótulo que abre la lista, no parte del mensaje',
+);
+check(
+  'los ids quedan acotados a 64',
+  r7.opciones.every((o) => (o.id ?? '').length <= 64),
+  'enteros son 130 caracteres de JSON por fila, en cada turno',
+);
+check(
+  'la opción elegible es el título, que es lo que hay que escribir',
+  r7.opciones[0]?.texto === 'Realizar una compra',
+);
+
+const transcripcion = conOpciones(r7.texto, r7.opciones);
+const releidas = opcionesDelTexto(transcripcion);
+check(
+  'las opciones sobreviven la ida y vuelta por la transcripción',
+  releidas.length === 4 && releidas[2].texto === 'AMCNO CLUB',
+);
+check('«1» elige la primera', elegirOpcion('1', releidas) === 'Realizar una compra');
+check(
+  'el enunciado multilínea no se confunde con opciones',
+  !releidas.some((o) => o.texto.includes('Cómo puedo ayudarte')),
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 3.5 · LA FORMA CORTA — `botones: "x,y,z"`

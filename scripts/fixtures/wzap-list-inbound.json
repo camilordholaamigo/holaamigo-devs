@@ -1,0 +1,43 @@
+{
+  "id": "181BE9D01B8EB5980C",
+  "type": "list",
+  "subtype": "text",
+  "flow": "inbound",
+  "from": "573228230631@c.us",
+  "fromNumber": "+573228230631",
+  "to": "573332420353@c.us",
+  "toNumber": "+573332420353",
+  "date": "2026-08-29T20:54:15.000Z",
+  "list": {
+    "button": "Elige una opción:",
+    "description": "¿Cómo puedo ayudarte ?",
+    "title": "Menú inicial",
+    "kind": "single_select",
+    "sections": [
+      {
+        "rows": [
+          {
+            "title": "Realizar una compra",
+            "id": "{\"button\":\"Realizar una compra\",\"r\":\"1\",\"intent\":\"RuleBuilder:americanino-7YZJso5HOP9v5gdmlfe6@b.m-1734546342641\",\"entities\":\"{}\"}",
+            "description": "Explora productos y compra de manera rápida y segura."
+          },
+          {
+            "title": "Menú principal ",
+            "id": "{\"button\":\"Menú principal \",\"r\":\"2\",\"intent\":\"RuleBuilder:americanino-iV3HCffyQiat4pn9z4wj@b.m-1734546342641\",\"entities\":\"{}\"}",
+            "description": "Consultar preguntas frecuentes y solicitar acompañamiento."
+          },
+          {
+            "title": "AMCNO CLUB",
+            "id": "{\"button\":\"AMCNO CLUB\",\"r\":\"3\",\"intent\":\"RuleBuilder:americanino-07uqws5syd@b.m-1740160482500\",\"entities\":\"{}\"}",
+            "description": "Saber mi nivel y los beneficios que tengo"
+          },
+          {
+            "title": "SUMAS",
+            "id": "{\"button\":\"SUMAS\",\"r\":\"4\",\"intent\":\"RuleBuilder:americanino-rn49vmlt7p@b.m-1756689393117\",\"entities\":\"{}\"}",
+            "description": "Enterate de algunas sosluciones financieras para ti"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -95,7 +95,7 @@ const CONTENEDORES = [
 const TEXTO_DE_OPCION = ['title', 'text', 'name', 'label', 'displayText', 'description'];
 
 /** Claves cuyo valor es el enunciado del mensaje, en orden de preferencia. */
-const ENUNCIADO = ['name', 'title', 'description', 'text', 'body', 'caption', 'footer'];
+const ENUNCIADO = ['name', 'title', 'description', 'text', 'body', 'caption'];
 
 /**
  * Claves cuyo valor es una COLECCIÓN de opciones, no una opción.
@@ -266,10 +266,18 @@ function opcionesDe(nodo: unknown, origen: string): OpcionInteractiva[] {
   return salida;
 }
 
+/**
+ * El id de la opción, acotado.
+ *
+ * En el `list` real de Americanino cada `id` es un JSON de 130 caracteres con el
+ * intent del rule builder adentro. No lo usamos para nada —no se puede contestar
+ * por id (ver `elegirOpcion`)— así que se guarda recortado: entero, cuatro filas
+ * meten medio kilobyte de basura en cada turno de la conversación.
+ */
 function idDe(fila: Record<string, unknown>): string | null {
   for (const clave of ['id', 'rowId', 'buttonId', 'selectedId']) {
     const v = fila[clave];
-    if (typeof v === 'string' && v.trim()) return v.trim();
+    if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 64);
     if (typeof v === 'number') return String(v);
   }
   return null;
@@ -283,10 +291,41 @@ function primerTexto(fila: Record<string, unknown>, claves: string[]): string | 
   return null;
 }
 
+/**
+ * El enunciado de un menú: encabezado y pregunta, en ese orden.
+ *
+ * No es un `primerTexto` y ésa es la lección del primer `list` real que
+ * recibimos (Americanino, 2026-08-29). Trae las dos cosas separadas:
+ *
+ *     title:       "Menú inicial"          ← el encabezado
+ *     description: "¿Cómo puedo ayudarte?" ← la pregunta de verdad
+ *
+ * WhatsApp muestra las dos. Quedarse con la primera dejaba «Menú inicial» como
+ * único contexto y tiraba la pregunta, que es justo lo que el modelo necesita
+ * para elegir bien — y lo que después se lee en la transcripción de un informe.
+ */
 function enunciadoDe(nodo: unknown): string | null {
   if (typeof nodo === 'string') return nodo.trim() || null;
   if (!nodo || typeof nodo !== 'object' || Array.isArray(nodo)) return null;
-  return primerTexto(nodo as Record<string, unknown>, ENUNCIADO);
+
+  const obj = nodo as Record<string, unknown>;
+  const partes: string[] = [];
+  const vistas = new Set<string>();
+
+  for (const clave of ENUNCIADO) {
+    const v = obj[clave];
+    if (typeof v !== 'string') continue;
+    const limpio = v.trim();
+    // `button` se salta: es la etiqueta del botón que abre la lista («Elige una
+    // opción:»), no parte del mensaje. Como texto suelto arriba de las opciones
+    // se lee como si fuera una instrucción nuestra.
+    if (!limpio || clave === 'button' || vistas.has(limpio.toLowerCase())) continue;
+    vistas.add(limpio.toLowerCase());
+    partes.push(limpio);
+    if (partes.length === 2) break;
+  }
+
+  return partes.length > 0 ? partes.join('\n') : null;
 }
 
 function textoPlano(obj: Record<string, unknown>): string | null {
