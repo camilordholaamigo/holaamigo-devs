@@ -189,6 +189,53 @@ check('lee `buttons` entrantes', r4.opciones.length === 2, `dio ${r4.opciones.le
 check('usa el body como enunciado', (r4.texto ?? '').includes('Elegí una'));
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 3.5 · LA FORMA CORTA — `botones: "x,y,z"`
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// No es de wzap: es la forma que se usa para simular un entrante con curl, donde
+// escribir el JSON anidado de una lista es media pantalla. Lo que hay que
+// defender es que el atajo no se coma un mensaje normal.
+
+console.log('\n\x1b[1mLa forma corta (botones separados por comas)\x1b[0m');
+
+const corto = {
+  id: 'prueba-manual-1',
+  body: 'si se necesita se te trata en el tramiento para el tema, no te preocupes.',
+  fromNumber: '573103565492',
+  flow: 'inbound',
+  botones: 'x,y,z',
+  device: '69e62a9b0b653ef3ef32e965',
+  chat: { name: 'Prueba' },
+};
+
+const r5 = extraerInteractivo(corto);
+check('parte "x,y,z" en tres opciones', r5.opciones.length === 3, `dio ${r5.opciones.length}`);
+check('el enunciado sale del body, no de la cadena de botones', r5.texto === corto.body);
+check(
+  'el render no repite la cadena cruda',
+  !conOpciones(r5.texto, r5.opciones).includes('x,y,z'),
+);
+
+const sinBotones = { ...corto };
+delete sinBotones.botones;
+const r6 = extraerInteractivo(sinBotones);
+check('sin `botones` no se rechaza nada', r6.opciones.length === 0 && r6.clase === null);
+check(
+  'sin `botones` el texto queda intacto',
+  conOpciones(r6.texto ?? sinBotones.body, r6.opciones) === corto.body,
+);
+
+const vacio = { ...corto, botones: '' };
+check('`botones: ""` no inventa opciones', extraerInteractivo(vacio).opciones.length === 0);
+
+check(
+  'una frase con comas en `body` NO se parte en opciones',
+  extraerInteractivo({ type: 'text', body: 'Hola, sí, claro, con gusto te ayudo.' }).opciones
+    .length === 0,
+  'partir por comas solo vale dentro de una clave que ya se sabe que trae opciones',
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // 4 · ELEGIR UNA OPCIÓN — cómo se «aprieta» un botón
 // ═══════════════════════════════════════════════════════════════════════════
 

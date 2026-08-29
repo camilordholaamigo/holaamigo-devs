@@ -87,6 +87,14 @@ se puede repetir:
   verdad, no solo qué claves olieron a menú. Si huele a menú y salen cero, el
   lector no entendió esa forma — y sin las dos cifras ese caso es invisible.
 
+- **La forma corta `botones: "x,y,z"`.** No es de wzap: es para simular un
+  entrante con curl sin escribir el JSON anidado de una lista. Se acepta en el
+  extractor y no en el webhook, porque un segundo lector del mismo payload es un
+  segundo lugar donde se pierde un mensaje. Partir por comas vale **solo** dentro
+  de una clave que ya se sabe que trae opciones (`botones`, `opciones`,
+  `buttons`, `options`…), nunca en `body`: si no, «Hola, sí, claro» aparecería
+  como un menú de tres opciones que nadie mandó.
+
 ### Cómo desplegarlo
 
 **No hay migración.** Es solo código.

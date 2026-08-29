@@ -74,6 +74,13 @@ const CONTENEDORES = [
   'poll',
   'list',
   'buttons',
+  // `botones` y `opciones` NO son de wzap: son la forma corta que se usa para
+  // simular un entrante a mano con curl, donde escribir el JSON anidado de una
+  // lista es media pantalla. Se aceptan acá y no en el webhook porque un
+  // segundo lector del mismo payload es un segundo lugar donde se pierde un
+  // mensaje. Ver `opcionesDeCadena`.
+  'botones',
+  'opciones',
   'interactive',
   'interactiveMessage',
   'template',
@@ -96,7 +103,35 @@ const ENUNCIADO = ['name', 'title', 'description', 'text', 'body', 'caption', 'f
  * Se usa para dos cosas opuestas y por eso está acá arriba: para saber por dónde
  * bajar, y para saber qué nodo NO es elegible aunque tenga título.
  */
-const CONTIENEN_OPCIONES = ['sections', 'rows', 'options', 'buttons', 'items', 'values', 'list'];
+const CONTIENEN_OPCIONES = [
+  'sections',
+  'rows',
+  'options',
+  'buttons',
+  'items',
+  'values',
+  'list',
+  'botones',
+  'opciones',
+];
+
+/** Los separadores de la forma corta, en orden de qué tan explícito es cada uno. */
+const SEPARADORES = /\s*[,|;\n]\s*/;
+
+/**
+ * `"Comprar, Arrendar, Hablar con asesor"` → tres opciones.
+ *
+ * Solo se aplica al valor de una clave que YA se sabe que contiene opciones
+ * —`botones`, `opciones`, `buttons`…—, nunca a `body` ni a un texto suelto. Esa
+ * restricción es lo único que impide que una frase con comas se parta en pedazos
+ * y aparezca como un menú que nadie mandó.
+ */
+function opcionesDeCadena(valor: string): string[] {
+  return valor
+    .split(SEPARADORES)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
 
 const MAX_OPCIONES = 24;
 const MAX_TEXTO_OPCION = 160;
@@ -132,7 +167,11 @@ export function extraerInteractivo(data: unknown): Interactivo {
     if (nodo == null) continue;
 
     const opciones = opcionesDe(nodo, clave);
-    const texto = enunciadoDe(nodo) ?? textoPlano(obj);
+    // Con la forma corta el contenedor ES la lista de opciones, así que no tiene
+    // enunciado propio: el enunciado es el `body` del mensaje. Sin esta
+    // distinción, `botones: "x,y,z"` dejaba «x,y,z» como texto del mensaje y
+    // encima repetido abajo como opciones.
+    const texto = typeof nodo === 'string' ? textoPlano(obj) : enunciadoDe(nodo) ?? textoPlano(obj);
 
     if (opciones.length > 0 || texto) {
       return { texto, opciones, clase: clave };
@@ -170,7 +209,17 @@ function opcionesDe(nodo: unknown, origen: string): OpcionInteractiva[] {
   };
 
   const visitar = (n: unknown, profundidad: number): void => {
-    if (profundidad > 4 || salida.length >= MAX_OPCIONES || !n || typeof n !== 'object') return;
+    if (profundidad > 4 || salida.length >= MAX_OPCIONES || !n) return;
+
+    // La forma corta: el contenedor es una cadena y las opciones van separadas
+    // por comas. Se parte acá y no en el llamador para que valga igual en el
+    // primer nivel (`botones: "x,y,z"`) que anidada (`list: {options: "x,y"}`).
+    if (typeof n === 'string') {
+      for (const parte of opcionesDeCadena(n)) agregar(null, parte);
+      return;
+    }
+
+    if (typeof n !== 'object') return;
 
     if (Array.isArray(n)) {
       for (const item of n) {
