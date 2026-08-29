@@ -379,6 +379,42 @@ transcripción. Cuando haya payloads reales, qué hacer con esto va en otro ADR.
 
 ---
 
+## `interactivos.ts`
+
+```ts
+extraerInteractivo(data: unknown): { texto, opciones, clase }
+conOpciones(texto: string | null, opciones: OpcionInteractiva[]): string
+opcionesDelTexto(texto: string): OpcionInteractiva[]
+elegirOpcion(respuesta: string, opciones: OpcionInteractiva[]): string
+```
+
+Mensajes con botones, listas o encuestas. **Puro**: no importa nada de servidor
+ni lee `process.env`, y hay una prueba que lo verifica.
+
+Nació de un payload real que rompía el parser: una encuesta entrante llega con
+`body: null` y todo el contenido colgando de `poll.name` + `poll.options[]`. Como
+`parsearEntranteWzap` exigía texto, el mensaje se descartaba, la conversación
+quedaba esperando y el negocio salía reportado como «no contestó».
+
+**Las opciones se renderizan al texto, numeradas desde 1.** No se guardan aparte
+porque `Mensaje` es `{role, text, timestamp}` y ese array no lleva metadata
+(ADR 0026). `opcionesDelTexto()` las vuelve a leer cuando hace falta contestar:
+es más barato que una columna y no puede desincronizarse del texto, porque **es**
+el texto.
+
+**`elegirOpcion()` es cómo se aprieta un botón.** El schema de `POST /v1/messages`
+se enumeró campo por campo contra su validador y no existe ningún campo para
+responder una opción: no hay `replyTo`, `quoted`, `selectedId` ni `payload`. Se
+puede MANDAR un menú, no se puede CONTESTAR uno. Así que se manda el texto de la
+opción, aceptando que el modelo la nombre por número o por texto aproximado. Si
+no matchea ninguna, devuelve lo que el modelo escribió: forzar una opción que
+nadie eligió es peor que una frase libre.
+
+El motor lo aplica **solo en el camino del modelo**. En modo `guion` el mensaje
+del operador sale tal cual — el guion es el contrato (ADR 0027).
+
+---
+
 ## `numeros.ts`
 
 ```ts
@@ -982,7 +1018,7 @@ verifica a mano con el procedimiento de
 | `/api/admin/pruebas/canales` | POST / DELETE | Nuestras líneas. El DELETE apaga, no borra: las conversaciones viejas apuntan al canal con una clave foránea |
 | `/api/admin/pruebas/diagnose` | GET / POST | Qué variables faltan · mandar un mensaje de prueba desde una línea |
 | `/api/pruebas/estado/[runId]` | GET | El estado en vivo **y la red de seguridad real** del motor |
-| `/api/webhooks/wzap` | POST | La entrada de wzap. Secreto en la cabecera `x-webhook-secret`, o en `?k=` / `?secret=`. El 401 dice cómo mandarlo. **Siempre devuelve 200** |
+| `/api/webhooks/wzap` | POST | La entrada de wzap. Un menú entra por acá como todo lo demás: **no hay evento de webhook para botones**. Secreto en la cabecera `x-webhook-secret`, o en `?k=` / `?secret=`. El 401 dice cómo mandarlo. **Siempre devuelve 200** |
 | `/api/webhooks/callbell` | POST | La entrada de Callbell. Secreto en `?k=`. **Siempre devuelve 200** |
 
 `POST /api/admin/pruebas/lotes` **ya no existe**. Era el segundo camino de

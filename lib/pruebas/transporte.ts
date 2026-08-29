@@ -34,8 +34,17 @@ export async function enviarMensaje(spec: EnvioSpec): Promise<ResultadoEnvio> {
     // wzap no tiene plantillas: conecta por QR y abre con texto libre. El
     // `usarPlantilla` del spec se ignora en silencio a propósito — el motor lo
     // manda siempre en el primer turno y no tiene por qué saber de proveedores.
-    return enviarPorWzap({ canal: spec.canal, to: spec.to, texto: spec.texto });
+    return enviarPorWzap({
+      canal: spec.canal,
+      to: spec.to,
+      texto: spec.texto,
+      opciones: spec.opciones,
+    });
   }
+  // Callbell no recibe `opciones` y no es un olvido: su API de texto no las
+  // tiene, y agregarlas al texto acá duplicaría lo que ya hace el plan B de
+  // wzap. Una línea de Callbell manda el texto tal cual, que es lo que hacía
+  // ayer.
   return enviarPorCallbell(spec);
 }
 

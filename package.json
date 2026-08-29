@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node scripts/test-claves.mjs && node scripts/test-migraciones.mjs && node scripts/test-orden-migraciones.mjs && node scripts/test-sustrato.mjs && node scripts/test-gobierno.mjs && node scripts/test-la-sala.mjs && node scripts/test-cro.mjs && node scripts/test-cmo.mjs && node scripts/test-integraciones.mjs && node scripts/test-flujo-inicial.mjs && node scripts/test-agente-agendamiento.mjs && node scripts/test-smoke-tester.mjs && node scripts/test-lotes-e-informes.mjs",
+    "test": "node scripts/test-claves.mjs && node scripts/test-migraciones.mjs && node scripts/test-orden-migraciones.mjs && node scripts/test-sustrato.mjs && node scripts/test-gobierno.mjs && node scripts/test-la-sala.mjs && node scripts/test-cro.mjs && node scripts/test-cmo.mjs && node scripts/test-integraciones.mjs && node scripts/test-flujo-inicial.mjs && node scripts/test-agente-agendamiento.mjs && node scripts/test-smoke-tester.mjs && node scripts/test-interactivos.mjs && node scripts/test-lotes-e-informes.mjs",
     "smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {

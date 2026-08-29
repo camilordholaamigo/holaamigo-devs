@@ -1,5 +1,6 @@
 import { db, unwrap } from '@/lib/supabase/admin';
 import type { CanalRow } from '@/lib/pruebas/types';
+import type { OpcionInteractiva } from '@/lib/pruebas/interactivos';
 
 /**
  * El transporte de Callbell: cómo le hablamos a la línea bajo prueba.
@@ -149,6 +150,16 @@ export interface EnvioSpec {
    * —que es la que usamos hoy— esto queda en null y se abre con texto libre.
    */
   usarPlantilla?: boolean;
+  /**
+   * Mandar el mensaje CON opciones (botones o lista) en vez de texto pelado.
+   *
+   * Opcional y casi siempre ausente: sin esto el envío es exactamente el que era.
+   * Solo wzap lo implementa —su API acepta `buttons` y `list`, verificado campo
+   * por campo contra su validador el 2026-08-29— y aun ahí degrada a texto
+   * numerado si el proveedor lo rechaza, porque un mensaje que no sale es peor
+   * que un mensaje sin botones.
+   */
+  opciones?: { texto: string; id?: string | null }[];
 }
 
 export async function enviarPorCallbell(spec: EnvioSpec): Promise<ResultadoEnvio> {
@@ -306,6 +317,18 @@ export interface Entrante {
    */
   canalUuid: string | null;
   texto: string;
+  /**
+   * Las opciones de un mensaje con botones, lista o encuesta. Vacío casi
+   * siempre.
+   *
+   * Ya vienen renderizadas dentro de `texto` —numeradas, para que la
+   * transcripción y el auditor las vean sin saber de esto— y se repiten acá
+   * estructuradas por una sola razón: para poder contestar eligiendo una. Ver
+   * `elegirOpcion()` en lib/pruebas/interactivos.ts.
+   */
+  opciones?: OpcionInteractiva[];
+  /** `poll`, `list`, `buttons`… cuando el entrante traía opciones. */
+  claseInteractiva?: string | null;
   /** `sent` es eco de lo que mandamos nosotros y hay que ignorarlo. */
   direccion: 'entrante' | 'saliente';
   nombre: string | null;

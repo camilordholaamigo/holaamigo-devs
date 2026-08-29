@@ -3,6 +3,7 @@ import { db, unwrap, mustWrite, tryWrite } from '@/lib/supabase/admin';
 import { track } from '@/lib/events';
 import { canalPorId } from '@/lib/pruebas/callbell';
 import { enviarMensaje } from '@/lib/pruebas/transporte';
+import { elegirOpcion, opcionesDelTexto } from '@/lib/pruebas/interactivos';
 import { siguienteTurno } from '@/lib/pruebas/comprador';
 import { auditar } from '@/lib/pruebas/auditor';
 import {
@@ -302,18 +303,25 @@ export async function avanzarTurno(pruebaId: string, token: string): Promise<voi
     const canal = await canalPorId(prueba.channel_id);
     const ahora = new Date().toISOString();
 
+    // La transcripción guarda lo que se va a mandar de verdad, no lo que el
+    // modelo escribió: si eligió una opción del menú, lo que salió por WhatsApp
+    // fue el texto de la opción. Guardar el original haría que la transcripción
+    // mienta sobre la conversación que después se audita (ADR 0023).
+    const ofrecidas = opcionesDelTexto(bloqueDelNegocio(prueba.conversation));
+    const aMandar = elegirOpcion(turno.mensaje, ofrecidas);
+
     // awaiting_reply en true ANTES de mandar, por lo mismo de siempre.
     await escribir(pruebaId, {
       conversation: [
         ...prueba.conversation,
-        { role: 'comprador', text: turno.mensaje, timestamp: ahora },
+        { role: 'comprador', text: aMandar, timestamp: ahora },
       ],
       turno: prueba.turno + 1,
       awaiting_reply: true,
       motivo_cierre: turno.motivo.slice(0, 300),
     });
 
-    const envio = await enviarMensaje({ canal, to: prueba.target_phone, texto: turno.mensaje });
+    const envio = await enviarMensaje({ canal, to: prueba.target_phone, texto: aMandar });
 
     if (!envio.ok) {
       await cerrarPrueba(pruebaId, {

@@ -8,6 +8,104 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.13.0] — 2026-08-29 · Los mensajes con opciones
+
+ADR 0028 dejó una pregunta abierta y dijo que solo se podía responder con
+payloads reales: si el puente de wzap nos entrega la ESTRUCTURA de un menú o si
+la aplana a texto. Ya hay payload real, y la respuesta era peor que «la aplana».
+
+```json
+{ "type": "poll", "body": null, "poll": { "name": "…", "options": [ … ] } }
+```
+
+**El contenido no está en `body`. `body` viene `null`.** Y `parsearEntranteWzap`
+exigía texto para devolver algo, así que un mensaje de opciones se descartaba
+entero: la conversación quedaba esperando, el watchdog la cerraba por tiempo y el
+negocio salía reportado como **«no contestó»**. Una cifra falsa en el informe de
+un cliente, que es exactamente lo que ADR 0025 existe para impedir.
+
+### Cómo se verificó
+
+Igual que en 0028: contra la API real, no contra la documentación —que sigue
+detrás de login y además no carga sin sesión. El validador OpenAPI de wzap
+responde con `additionalProperties: false`, así que cada campo se puede probar de
+a uno y la respuesta es sí o no. Todo lo de abajo salió de eso, el 2026-08-29, y
+se puede repetir:
+
+- **`POST /v1/messages` acepta** `buttons: [{id, text}]`,
+  `list: {title, description, button, footer, sections: [{title, rows: [{id, title, description}]}]}`
+  y `poll: {name, options, multiple}`. Rechaza `type`, `interactive`, `replyTo`,
+  `quoted`, `payload` y `selectedId`.
+- **Tipos de mensaje que pueden llegar** (enum de `GET /v1/chat/{device}/messages?type=…`):
+  `interactive`, `template`, `list`, `list_response`, `buttons_response`, `poll`,
+  `order`, `product`, `payment`, además de los de siempre.
+- **Eventos de webhook que existen**: `message:in:new`, `message:out:new`,
+  `message:out:ack`, `message:update`, `message:reaction`, `chat:update`,
+  `contact:update`. **No hay ningún evento para botones**: un menú entra por
+  `message:in:new` como todo lo demás.
+
+### Agregado
+
+- **`lib/pruebas/interactivos.ts`** — módulo PURO (no importa nada de servidor,
+  no lee `process.env`). Saca enunciado y opciones de un entrante, las renderiza
+  al texto numeradas, y traduce de vuelta la que el modelo eligió.
+- **`scripts/test-interactivos.mjs`**, en `npm test`. Corre contra los dos
+  payloads reales —la encuesta y un texto con link preview— porque un ejemplo
+  inventado solo prueba el ejemplo.
+
+### Cambiado
+
+- **Las opciones se escriben DENTRO del texto**, numeradas desde 1:
+
+  ```
+  ¿Qué te interesa?
+  [1] Comprar
+  [2] Arrendar
+  ```
+
+  No se guardan aparte, y eso no es pereza: `Mensaje` es `{role, text, timestamp}`
+  y ADR 0026 dice que meterle metadata a ese array «habría sido la muerte». Así
+  se gana todo de una vez y sin migración — la transcripción las muestra, el
+  auditor determinístico las ve, el evaluador las cita, y el modelo puede elegir
+  una.
+
+- **Cómo se «aprieta» un botón: se escribe su texto.** No hay alternativa —
+  el schema de envío no tiene ningún campo para responder una opción. El motor
+  traduce lo que el modelo eligió («2», «opción 2», «quiero arrendar») al texto
+  exacto de la opción, y **la transcripción guarda lo que salió de verdad**, no
+  lo que el modelo escribió (ADR 0023). En modo `guion` no se toca nada: el
+  guion del operador es el contrato.
+
+- **`enviarMensaje()` acepta `opciones`** y wzap las manda como `buttons` (hasta
+  3) o `list` (más). Si el proveedor las rechaza con un 4xx, **reintenta una vez
+  como texto numerado**: WhatsApp no acepta botones nativos por conexiones no
+  oficiales desde 2023-05-10, así que el rechazo es lo esperado, y un mensaje que
+  no sale por un adorno anula la medición entera. Sin `opciones` el envío es
+  byte por byte el que era.
+
+- El log del webhook agrega `opciones` junto a `botones`: cuántas se leyeron de
+  verdad, no solo qué claves olieron a menú. Si huele a menú y salen cero, el
+  lector no entendió esa forma — y sin las dos cifras ese caso es invisible.
+
+### Cómo desplegarlo
+
+**No hay migración.** Es solo código.
+
+1. Desplegar.
+2. **Crear el webhook en wzap**, que es el paso que faltaba desde 3.12.0 y por el
+   que no llegaba nada: en la cuenta hay dos webhooks (`rentmies-reloaded…` y el
+   de Bubble) y **ninguno apunta a este proyecto**. Webhooks → nuevo:
+   - Evento `message:in:new`
+   - Device `69e62a9b0b653ef3ef32e965` (Rentmies Propio D2C y Not)
+   - URL `https://holaamigo-devs.vercel.app/api/webhooks/wzap`
+   - Cabecera `x-webhook-secret` con el valor de `WZAP_WEBHOOK_SECRET`
+
+   No hay que tocar los dos que ya existen.
+3. Verificar con `GET /api/webhooks/wzap` + la cabecera: tiene que dar
+   `{"ok":true,"listo":true}`.
+
+---
+
 ## [3.12.0] — 2026-08-25 · Dos transportes, y wzap primero
 
 El smoke tester deja de depender de un solo proveedor de WhatsApp. wzap entra

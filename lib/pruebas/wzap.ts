@@ -1,4 +1,5 @@
 import { describirFalloDeRed, type Entrante } from '@/lib/pruebas/callbell';
+import { conOpciones, extraerInteractivo } from '@/lib/pruebas/interactivos';
 import type { CanalRow } from '@/lib/pruebas/types';
 
 /**
@@ -57,10 +58,64 @@ export interface ResultadoEnvioWzap {
   pista: string | null;
 }
 
+/**
+ * Cuántas opciones caben en botones antes de que haya que mandar una lista.
+ *
+ * WhatsApp admite hasta 3 botones; de ahí para arriba el formato es la lista
+ * desplegable. El validador de wzap NO lo comprueba —acepta cuatro sin chistar—
+ * así que el tope lo pone este código o lo pone WhatsApp descartando el mensaje.
+ */
+const MAX_BOTONES = 3;
+
+/**
+ * El sobre de opciones: botones si son pocas, lista si son muchas.
+ *
+ * El schema salió de enumerar `POST /v1/messages` campo por campo contra su
+ * validador OpenAPI el 2026-08-29 (`additionalProperties: false` convierte cada
+ * intento en una respuesta de sí o no). Acepta:
+ *   buttons: [{ id, text }]
+ *   list:    { title, description, button, footer,
+ *              sections: [{ title, rows: [{ id, title, description }] }] }
+ *   poll:    { name, options, multiple }
+ */
+function sobreDeOpciones(
+  opciones: { texto: string; id?: string | null }[],
+): Record<string, unknown> {
+  if (opciones.length <= MAX_BOTONES) {
+    return {
+      buttons: opciones.map((o, i) => ({ id: o.id ?? String(i + 1), text: o.texto.slice(0, 20) })),
+    };
+  }
+  return {
+    list: {
+      button: 'Ver opciones',
+      sections: [
+        {
+          title: 'Opciones',
+          rows: opciones.slice(0, 10).map((o, i) => ({
+            id: o.id ?? String(i + 1),
+            title: o.texto.slice(0, 24),
+          })),
+        },
+      ],
+    },
+  };
+}
+
+/** Las opciones escritas en el texto, numeradas. El plan B de todo lo de arriba. */
+function opcionesComoTexto(
+  texto: string,
+  opciones: { texto: string; id?: string | null }[],
+): string {
+  const lista = opciones.map((o, i) => `${i + 1}. ${o.texto}`).join('\n');
+  return `${texto}\n${lista}`;
+}
+
 export async function enviarPorWzap(spec: {
   canal: CanalRow;
   to: string;
   texto: string;
+  opciones?: { texto: string; id?: string | null }[];
 }): Promise<ResultadoEnvioWzap> {
   const llave = llaveWzap();
   if (!llave) {
@@ -88,23 +143,59 @@ export async function enviarPorWzap(spec: {
     };
   }
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const opciones = spec.opciones ?? [];
+  const conBotones = opciones.length > 0;
+
+  const disparar = async (cuerpo: Record<string, unknown>) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+    try {
+      const res = await fetch(WZAP_URL, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          // Sin `Bearer`. wzap usa el esquema `Token: <llave>` a secas.
+          token: llave,
+          'content-type': 'application/json',
+          'user-agent': 'HolaAmigoSmokeTester/1.0 (+https://holaamigo.co)',
+        },
+        body: JSON.stringify(cuerpo),
+      });
+      return { res, texto: await res.text() };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 
   try {
-    const res = await fetch(WZAP_URL, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        // Sin `Bearer`. wzap usa el esquema `Token: <llave>` a secas.
-        token: llave,
-        'content-type': 'application/json',
-        'user-agent': 'HolaAmigoSmokeTester/1.0 (+https://holaamigo.co)',
-      },
-      body: JSON.stringify({ phone: spec.to, message: spec.texto, device }),
+    let { res, texto } = await disparar({
+      phone: spec.to,
+      message: spec.texto,
+      device,
+      ...(conBotones ? sobreDeOpciones(opciones) : {}),
     });
 
-    const texto = await res.text();
+    // ── EL PLAN B ────────────────────────────────────────────────────────
+    //
+    // Si el mensaje llevaba opciones y wzap lo rechazó por el cuerpo, se
+    // reintenta UNA vez como texto plano con las opciones numeradas.
+    //
+    // No es paciencia con un proveedor caprichoso: WhatsApp dejó de aceptar
+    // botones nativos por conexiones no oficiales el 2023-05-10, así que un
+    // rechazo acá es el resultado ESPERADO y no una anomalía. Lo que no se
+    // puede permitir es que por eso no salga el mensaje: la conversación es la
+    // medición, y perderla por un adorno la anula entera.
+    if (!res.ok && conBotones && res.status >= 400 && res.status < 500) {
+      console.warn(
+        `[wzap] opciones rechazadas (${res.status}); reintento como texto numerado`,
+        codigoDeError(texto) ?? '',
+      );
+      ({ res, texto } = await disparar({
+        phone: spec.to,
+        message: opcionesComoTexto(spec.texto, opciones),
+        device,
+      }));
+    }
 
     if (!res.ok) {
       // wzap devuelve `{status, message, errorCode}`. El `errorCode` es lo que
@@ -132,8 +223,6 @@ export async function enviarPorWzap(spec: {
   } catch (err) {
     const detalle = describirFalloDeRed(err);
     return { ok: false, messageId: null, error: detalle.mensaje, pista: detalle.pista };
-  } finally {
-    clearTimeout(timer);
   }
 }
 
@@ -213,7 +302,17 @@ export function parsearEntranteWzap(raw: unknown): Entrante | null {
   const chat = data.chat as Record<string, unknown> | undefined;
   const contacto = data.contact as Record<string, unknown> | undefined;
 
-  const texto = primerString(data.body, data.text, data.caption, sobre.body);
+  // El enunciado y las opciones de un mensaje interactivo, si lo es.
+  //
+  // Va ANTES del texto plano y no después, y ése es el arreglo: en el payload
+  // real de una encuesta `body` viene `null` y todo el contenido está en
+  // `poll.name` + `poll.options[]`. Con el orden al revés el mensaje se
+  // descartaba entero y la conversación quedaba colgada esperando una
+  // respuesta que ya había llegado. Ver lib/pruebas/interactivos.ts.
+  const interactivo = extraerInteractivo(data);
+
+  const plano = primerString(data.body, data.text, data.caption, sobre.body);
+  const texto = conOpciones(interactivo.texto ?? plano, interactivo.opciones);
   if (!texto) return null;
 
   const candidatos = new Set<string>();
@@ -242,6 +341,8 @@ export function parsearEntranteWzap(raw: unknown): Entrante | null {
     // contra esa columna sin saber de qué proveedor viene, y así sigue.
     canalUuid: deviceDe(sobre) ?? deviceDe(data),
     texto: texto.slice(0, 4_000),
+    opciones: interactivo.opciones,
+    claseInteractiva: interactivo.clase,
     direccion,
     nombre: primerString(chat?.name, contacto?.name, data.fromName),
     proveedorId: primerString(data.id, sobre.id),
@@ -280,7 +381,12 @@ export function resumirPayloadWzap(raw: unknown): Record<string, unknown> {
     tipo_mensaje: data?.type ?? null,
     flow: data?.flow ?? null,
     device: deviceDe(obj) ?? deviceDe(data),
+    // `botones` dice qué claves OLIERON a interactivo; `opciones` dice cuántas
+    // se pudieron leer de verdad. Las dos, y no una: si huele a menú y salen
+    // cero opciones, el lector no entendió esa forma y hay que mirar el payload.
+    // Con una sola cifra ese caso es invisible.
     botones: pistasDeBotones(raw),
+    opciones: extraerInteractivo(data).opciones.length,
   };
 }
 
