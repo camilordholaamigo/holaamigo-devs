@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Badge, Card } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import { errorDeRespuesta } from '@/lib/auth/sesion';
 import type { CanalRow, ProveedorDeLinea } from '@/lib/pruebas/types';
 import type { EntradaAMedida } from '@/lib/pruebas/guion';
 
@@ -117,7 +118,7 @@ function LineaEditable({
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error ?? 'No se pudo guardar.');
+        setError(errorDeRespuesta(res, json, 'No se pudo guardar.'));
         return;
       }
       setOk('Guardado. Toma efecto en menos de 30 segundos.');
@@ -139,10 +140,15 @@ function LineaEditable({
         body: JSON.stringify({ telefono: prueba, canalId: canal?.id }),
       });
       const json = await res.json();
+      // `res.ok` antes que `json.ok`: un 401 no trae `ok` ni `pista`, y sin este
+      // orden el botón de probar la línea contestaba «Falló: No autorizado» —
+      // que se lee como si el proveedor hubiera rechazado la llave.
       setResultado(
-        json.ok
+        res.ok && json.ok
           ? `Salió. Id del mensaje: ${json.messageId ?? '(sin id)'}`
-          : `Falló: ${json.error}${json.pista ? ` — ${json.pista}` : ''}`,
+          : `Falló: ${errorDeRespuesta(res, json, 'no se pudo mandar')}${
+              json.pista ? ` — ${json.pista}` : ''
+            }`,
       );
     } catch (err) {
       setResultado(err instanceof Error ? err.message : 'Falló la petición.');
@@ -354,7 +360,7 @@ export function AccionesDePrueba({
       });
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setError(json.error ?? 'No se pudo.');
+        setError(errorDeRespuesta(res, json, 'No se pudo.'));
         return;
       }
       router.refresh();
@@ -386,7 +392,7 @@ export function AccionesDePrueba({
       });
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setError(json.error ?? 'No se pudo reintentar.');
+        setError(errorDeRespuesta(res, json, 'No se pudo reintentar.'));
         return;
       }
       // A la conversación nueva, no de vuelta acá: si se quedara en esta

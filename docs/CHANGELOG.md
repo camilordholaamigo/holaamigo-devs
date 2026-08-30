@@ -8,6 +8,75 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.16.0] — 2026-08-30 · «No autorizado» deja de ser un callejón
+
+Dos fallos que se ven igual —una pantalla que dice algo corto y no dice qué
+hacer— y no tienen nada que ver entre sí. Los dos aparecieron probando el smoke
+tester contra un número nuevo por wzap, el día antes de salir a producción.
+
+### Arreglado
+
+- **La sesión vencida ya no se lee como un permiso que falta.** La cookie de
+  admin dura 12 horas. Cuando vence, el layout de `/admin` redirige al login *en
+  la siguiente carga de página* — pero una pantalla ya abierta no se recarga
+  sola: el operador le daba a «Crear», el `fetch` recibía `401 {"error":"No
+  autorizado"}` y el formulario mostraba **«No autorizado»** y nada más. Dos
+  palabras que describen bien lo que pasó y no le sirven a nadie: se leen como
+  el gobierno de capacidades frenando la prueba (ADR 0018), o como el proveedor
+  rechazando la llave. Ahora dice qué pasó, cuánto dura la sesión, y **que se
+  entre en otra pestaña** — navegar al login desde ahí se llevaba puestos los
+  tres pasos de guion recién escritos.
+- **El botón de probar una línea miraba `json.ok` antes que `res.ok`.** Un 401
+  no trae ninguno de los dos, así que contestaba `Falló: No autorizado`, que se
+  lee como si wzap hubiera rechazado la llave.
+- **`?next=` en el login**, saneado con `destinoSeguro()`: solo rutas locales, y
+  `//` queda afuera — sin ese filtro el login del admin es un redirect abierto.
+
+### Agregado
+
+- **`saludDeLineaWzap()`, `devicesWzap()` y `webhooksWzap()`** en `wzap.ts`, y el
+  campo `wzap` en `GET /api/admin/pruebas/diagnose`. Responden la pregunta que
+  ninguna pantalla contestaba: **¿va a volver la respuesta?**
+
+  En wzap el webhook se registra **por `device`**. Una cuenta puede tener la
+  llave correcta, el device correcto y el mensaje saliendo perfecto, y no
+  recibir una sola respuesta, porque el webhook que reenvía los entrantes está
+  atado a otra línea de la misma cuenta. La cuenta con la que corre esto tiene
+  cuatro devices y tres webhooks hacia aplicaciones ajenas.
+
+  Y no se ve por ningún lado: el mensaje sale, el negocio contesta, el evento
+  se dispara hacia una URL que no es la nuestra, la conversación se cuelga, el
+  watchdog la cierra y el informe del cliente dice «no contestó». No es un
+  error — es una cifra falsa, y una acusación falsa contra el negocio de
+  alguien. Por eso no se deduce de la configuración local: se le pregunta al
+  proveedor.
+
+- **El aviso en `/admin/pruebas`**, arriba de todo y en rojo, con lo que hay que
+  arreglar por línea. Y el resultado también cuando está todo bien: sin la
+  confirmación, «no hay alertas» es indistinguible de «no se pudo preguntar».
+
+### Verificado contra producción, no contra la documentación
+
+| Qué | Resultado |
+|---|---|
+| `GET /v1/devices` con `WZAP_API_KEY` | 200 · 4 devices, los 4 `operative` y `online` |
+| `GET /v1/webhooks` | 200 · 4, y solo uno apunta acá |
+| El webhook `holaamigo smoke tester` | activo, `message:in:new`, device `69e62a9b…`, secreto en `?k=` correcto |
+| El device de la línea preferida (migración 0018) | `69e62a9b…` — **el mismo**, así que las respuestas sí vuelven |
+| `GET /api/webhooks/wzap` en producción, sin secreto | 401 `no autorizado` |
+| …con la cabecera, y con `?k=` | 200 las dos |
+
+Es decir: el transporte de wzap estaba y está sano de punta a punta. El «no
+autorizado» del reporte era la cookie de admin, no el proveedor — que es
+exactamente la confusión que arregla el primer punto.
+
+### Para desplegar
+
+Nada. No hay migración, no hay variable de entorno nueva, no hay que tocar el
+panel de wzap. `vercel --prod` y ya.
+
+---
+
 ## [3.15.0] — 2026-08-29 · Reintentar con el mismo plan
 
 Volver a correr una prueba obligaba a reescribir el negocio, la apertura, el

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Badge, Card } from '@/components/ui';
 import { cn } from '@/lib/utils';
+import { SESION_VENCIDA, entradaConVuelta, errorDeRespuesta } from '@/lib/auth/sesion';
 import {
   MAX_GUION,
   MAX_SONDAS,
@@ -227,7 +228,7 @@ export function PruebaNueva({
       });
       const json = await res.json();
       if (!res.ok) {
-        setAvisoBorrador(json.error ?? 'No se pudo redactar el borrador.');
+        setAvisoBorrador(errorDeRespuesta(res, json, 'No se pudo redactar el borrador.'));
         return;
       }
       setE((prev) => ({
@@ -271,7 +272,7 @@ export function PruebaNueva({
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error ?? 'No se pudo crear la prueba.');
+        setError(errorDeRespuesta(res, json, 'No se pudo crear la prueba.'));
         setOmitidos(json.omitidos ?? []);
         return;
       }
@@ -780,7 +781,28 @@ export function PruebaNueva({
             </div>
           </Card>
 
-          {error ? <Aviso tono="error">{error}</Aviso> : null}
+          {error ? (
+            <Aviso tono="error">
+              {error}
+              {/* El enlace solo aparece cuando el error ES la sesión vencida, y
+                  abre en otra pestaña a propósito: navegar desde acá se lleva
+                  los tres pasos que la persona acaba de escribir. Ver
+                  lib/auth/sesion.ts. */}
+              {error === SESION_VENCIDA ? (
+                <>
+                  {' '}
+                  <a
+                    href={entradaConVuelta()}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold underline underline-offset-2"
+                  >
+                    Entrar de nuevo →
+                  </a>
+                </>
+              ) : null}
+            </Aviso>
+          ) : null}
           {omitidos.length > 0 ? (
             <Card className="border-leak/30 bg-leak-soft">
               <div className="space-y-1.5 p-4">

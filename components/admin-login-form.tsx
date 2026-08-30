@@ -3,7 +3,13 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 
-export function AdminLoginForm() {
+/**
+ * `destino` es a dónde se cae después de entrar, y lo elige la pantalla: cuando
+ * la sesión vence en medio de algo, `?next=` trae de vuelta a esa pantalla en
+ * vez de dejar a alguien en /admin/prospects buscando dónde estaba. Llega ya
+ * saneado por `destinoSeguro()`. Ver lib/auth/sesion.ts.
+ */
+export function AdminLoginForm({ destino = '/admin/prospects' }: { destino?: string }) {
   const router = useRouter();
   const [password, setPassword] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -26,7 +32,7 @@ export function AdminLoginForm() {
         setBusy(false);
         return;
       }
-      router.push('/admin/prospects');
+      router.push(destino);
       router.refresh();
     } catch {
       setError('Sin conexión.');

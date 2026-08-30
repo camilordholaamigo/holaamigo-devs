@@ -6,6 +6,7 @@ import { EnviarInforme } from '@/components/informe-admin';
 import { estadoDelLote, lotesRecientes } from '@/lib/pruebas/lote';
 import { informesRecientes } from '@/lib/pruebas/informe';
 import { faltaParaLineas } from '@/lib/pruebas/transporte';
+import { devicesWzap, saludDeLineaWzap, webhooksWzap } from '@/lib/pruebas/wzap';
 import { plantillasActivas } from '@/lib/pruebas/compilar';
 import { formatoDuracion } from '@/lib/pruebas/motor';
 import { isoDaysAgo } from '@/lib/utils';
@@ -109,6 +110,30 @@ export default async function PruebasPage() {
   const falta = Object.keys(faltaParaLineas(lineas));
   const activas = lineas.filter((c) => c.activo);
 
+  // ¿Van a VOLVER las respuestas? En wzap el webhook se registra por device, así
+  // que una línea puede tener la llave bien, el device bien y el mensaje
+  // saliendo, y no recibir nada — porque el webhook que reenvía los entrantes
+  // está atado a otra línea de la misma cuenta. Ese fallo no se ve en ninguna
+  // pantalla: la conversación se cuelga, el watchdog la cierra y el informe del
+  // cliente dice «no contestó», que es una acusación falsa contra su negocio.
+  // Por eso se le pregunta a wzap acá, antes de que alguien mande nada.
+  const wzapActivas = activas.filter((c) => c.provider === 'wzap');
+  const [devices, webhooks] = wzapActivas.length
+    ? await Promise.all([devicesWzap(), webhooksWzap()])
+    : [null, null];
+
+  const saludWzap = wzapActivas.map((linea) => ({
+    linea,
+    salud: saludDeLineaWzap({
+      channelUuid: linea.channel_uuid,
+      devices,
+      webhooks,
+      nuestraRuta: '/api/webhooks/wzap',
+      secreto: process.env.WZAP_WEBHOOK_SECRET ?? null,
+    }),
+  }));
+  const wzapConProblemas = saludWzap.filter((x) => x.salud.problemas.length > 0);
+
   // El estado de cada prueba sale de la función de SQL, una por lote y en
   // paralelo. Contar filas acá se ve más barato y no lo es: son las mismas
   // consultas sin el plan que Postgres ya sabe hacer (ADR 0023).
@@ -159,6 +184,38 @@ export default async function PruebasPage() {
             <p className="text-[13px] leading-relaxed text-leak/80">
               Configurá una abajo, en <strong>Nuestras líneas</strong>, y probá el envío contra tu
               propio celular antes de apuntarle a un prospecto.
+            </p>
+          </div>
+        </Card>
+      ) : null}
+
+      {/* Va arriba y en rojo aunque la línea «funcione»: es el único fallo del
+          subsistema que produce una cifra falsa en vez de un error. */}
+      {wzapConProblemas.length > 0 ? (
+        <Card className="border-leak/30 bg-leak-soft">
+          <div className="space-y-2.5 p-5">
+            <p className="text-[14px] font-semibold text-leak">
+              {wzapConProblemas.length === 1
+                ? 'Una línea de wzap no está lista para una prueba de punta a punta.'
+                : `${wzapConProblemas.length} líneas de wzap no están listas para una prueba de punta a punta.`}
+            </p>
+            {wzapConProblemas.map(({ linea, salud }) => (
+              <div key={linea.id} className="space-y-1">
+                <p className="tnum text-[12.5px] font-medium text-leak">
+                  {linea.label} · {linea.phone_e164}
+                </p>
+                {salud.problemas.map((p, i) => (
+                  <p key={i} className="text-[13px] leading-relaxed text-leak/80">
+                    {p}
+                  </p>
+                ))}
+              </div>
+            ))}
+            <p className="text-[12.5px] leading-relaxed text-leak/70">
+              El webhook se registra en wzap → Webhooks, con el evento{' '}
+              <code>message:in:new</code>, el device de esta línea y la URL{' '}
+              <code>{env.siteUrl}/api/webhooks/wzap</code> (el secreto va en la cabecera{' '}
+              <code>x-webhook-secret</code>, o como <code>?k=</code>).
             </p>
           </div>
         </Card>
@@ -435,6 +492,35 @@ export default async function PruebasPage() {
             acercarse al umbral de spam de Meta.
           </p>
         </div>
+
+        {/* Lo que wzap contesta sobre cada línea, no lo que nosotros creemos.
+            Se muestra también cuando está todo bien: sin la confirmación, «no
+            hay alertas» es indistinguible de «no se pudo preguntar». */}
+        {saludWzap.length > 0 ? (
+          <Card>
+            <div className="space-y-1.5 px-5 py-4">
+              <p className="text-[12px] font-semibold uppercase tracking-wider text-ink-faint">
+                Lo que dice wzap
+              </p>
+              {saludWzap.map(({ linea, salud }) => (
+                <p key={linea.id} className="tnum text-[12.5px] text-ink-soft">
+                  {linea.label} —{' '}
+                  {salud.device
+                    ? `${salud.device.alias ?? 'sin alias'}, sesión ${salud.device.sesion ?? '?'}`
+                    : devices === null
+                      ? 'no se pudo consultar la cuenta'
+                      : 'el device no existe en la cuenta'}
+                  {' · '}
+                  {webhooks === null
+                    ? 'webhooks sin consultar'
+                    : salud.recibeRespuestas
+                      ? 'recibe respuestas'
+                      : 'NO recibe respuestas'}
+                </p>
+              ))}
+            </div>
+          </Card>
+        ) : null}
 
         <LineasDeCallbell canales={lineas} />
 

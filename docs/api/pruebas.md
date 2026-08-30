@@ -364,6 +364,55 @@ payload no está verificada contra un mensaje real todavía, y perder un entrant
 en silencio cuelga la conversación y reporta al negocio como «no contestó» — una
 cifra falsa en el informe de un cliente.
 
+### La salud de una línea · «¿va a volver la respuesta?»
+
+```ts
+devicesWzap(): Promise<DeviceWzap[] | null>
+webhooksWzap(): Promise<WebhookWzap[] | null>
+saludDeLineaWzap(args: {
+  channelUuid, devices, webhooks, nuestraRuta, secreto
+}): SaludDeLineaWzap
+```
+
+Mandar bien no alcanza, y ésta es la trampa más cara del transporte: **en wzap
+el webhook se registra por `device`.** Una cuenta puede tener la llave correcta,
+el device correcto y el mensaje saliendo perfecto, y no recibir una sola
+respuesta — porque el webhook que reenvía los entrantes está atado a OTRA línea
+de la misma cuenta. La cuenta con la que se puso esto en marcha tenía cuatro
+devices y tres webhooks hacia aplicaciones ajenas.
+
+Ese fallo **no se ve por ningún lado**. El mensaje sale, el negocio contesta, el
+evento se dispara hacia una URL que no es la nuestra, la conversación se cuelga,
+el watchdog la cierra y el informe del cliente dice «no contestó». No es un
+error: es una cifra falsa, y una acusación falsa contra el negocio de alguien.
+Por eso no se deduce de la configuración local — se le pregunta al proveedor.
+
+Las dos lecturas son `GET` y **devuelven `null` en vez de lanzar**: alimentan una
+pantalla de diagnóstico, y una pantalla de diagnóstico que se cae con el
+proveedor no diagnostica nada. `null` («no se pudo preguntar») y la lista vacía
+(«no hay ninguno») se distinguen a propósito: mandan a lugares distintos.
+
+`saludDeLineaWzap()` es **pura** — recibe lo ya leído y no toca la red — y
+devuelve `problemas: string[]`. Vacío = la línea está lista. Comprueba, en orden:
+
+| Chequeo | Qué pasa si falla |
+|---|---|
+| el `device` existe en la cuenta | no sale ningún mensaje |
+| la sesión del device está `online` | hay que reconectar el QR |
+| hay un webhook **activo**, hacia nuestra ruta, con `message:in:new`, que cubra ese device (`deviceId === null` cubre toda la cuenta) | los mensajes salen y las respuestas no vuelven |
+| si el webhook lleva el secreto en la URL, que sea el vigente | cada entrante se rechaza con 401 |
+
+`secreto` entra solo para comparar y **nunca sale**: lo que se devuelve es un
+booleano. La ruta se compara por *path* y no por URL completa — entre el dominio
+de producción, el alias del proyecto y una preview, la misma ruta se escribe de
+cuatro formas y las cuatro son nuestras.
+
+Lo consumen `/api/admin/pruebas/diagnose` (GET, campo `wzap`) y la pantalla
+`/admin/pruebas`, que pinta el aviso en rojo **arriba de todo** — es el único
+fallo del subsistema que produce una cifra falsa en vez de un error — y muestra
+además el resultado cuando está todo bien: sin la confirmación, «no hay alertas»
+es indistinguible de «no se pudo preguntar».
+
 ```ts
 resumirPayloadWzap(raw: unknown): Record<string, unknown>
 pistasDeBotones(raw: unknown): string[]
@@ -1046,7 +1095,7 @@ verifica a mano con el procedimiento de
 | `/api/admin/pruebas/lotes/[loteId]` | GET | Estado de la prueba **y su motor**: empuja la cola en `after()` |
 | `/api/admin/pruebas/lotes/[loteId]` | PATCH | pausar · reanudar · cancelar lo que falta |
 | `/api/admin/pruebas/canales` | POST / DELETE | Nuestras líneas. El DELETE apaga, no borra: las conversaciones viejas apuntan al canal con una clave foránea |
-| `/api/admin/pruebas/diagnose` | GET / POST | Qué variables faltan · mandar un mensaje de prueba desde una línea |
+| `/api/admin/pruebas/diagnose` | GET / POST | Qué variables faltan · **si cada línea de wzap va a recibir respuestas** (campo `wzap`, ver arriba) · mandar un mensaje de prueba desde una línea |
 | `/api/pruebas/estado/[runId]` | GET | El estado en vivo **y la red de seguridad real** del motor |
 | `/api/webhooks/wzap` | POST | La entrada de wzap. Un menú entra por acá como todo lo demás: **no hay evento de webhook para botones**. Secreto en la cabecera `x-webhook-secret`, o en `?k=` / `?secret=`. El 401 dice cómo mandarlo. **Siempre devuelve 200** |
 | `/api/webhooks/callbell` | POST | La entrada de Callbell. Secreto en `?k=`. **Siempre devuelve 200** |

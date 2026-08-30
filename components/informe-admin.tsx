@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { cn } from '@/lib/utils';
+import { errorDeRespuesta } from '@/lib/auth/sesion';
 
 /**
  * Generar los informes de una prueba, y mandarlos.
@@ -35,7 +36,7 @@ export function GenerarInformes({ loteId, listos }: { loteId: string; listos: nu
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error ?? 'No se pudo generar.');
+        setError(errorDeRespuesta(res, json, 'No se pudo generar.'));
         return;
       }
       const vacios = json.vacios?.length ?? 0;
@@ -120,7 +121,7 @@ export function EnviarInforme({
       });
       const json = await res.json();
       if (!res.ok) {
-        setError(json.error ?? 'No se pudo enviar.');
+        setError(errorDeRespuesta(res, json, 'No se pudo enviar.'));
         return;
       }
       setResultado(`Enviado a ${json.enviado_a}`);

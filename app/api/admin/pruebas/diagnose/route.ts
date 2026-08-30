@@ -3,7 +3,13 @@ import { currentAdmin } from '@/lib/auth/admin';
 import { db } from '@/lib/supabase/admin';
 import { canalActivo, canalesActivos, llaveCallbell } from '@/lib/pruebas/callbell';
 import { enviarMensaje, faltaParaLineas } from '@/lib/pruebas/transporte';
-import { llaveWzap } from '@/lib/pruebas/wzap';
+import {
+  devicesWzap,
+  llaveWzap,
+  saludDeLineaWzap,
+  webhooksWzap,
+  type SaludDeLineaWzap,
+} from '@/lib/pruebas/wzap';
 import { configDePruebas } from '@/lib/pruebas/lanzar';
 import { aE164 } from '@/lib/pruebas/numeros';
 import { env } from '@/lib/env';
@@ -56,6 +62,28 @@ export async function GET() {
     .select('phone_e164, bloqueado_motivo')
     .eq('bloqueado', true)
     .limit(20);
+
+  // Lo que wzap dice de sí mismo, no lo que nosotros creemos. Dos llamadas,
+  // solo si hay alguna línea de wzap prendida: preguntarle al proveedor por una
+  // configuración que no se está usando es gastar dos segundos de una pantalla
+  // que se abre justamente cuando algo urge.
+  const hayWzap = lineas.some((l) => l.provider === 'wzap');
+  const [devices, webhooks] = hayWzap
+    ? await Promise.all([devicesWzap(), webhooksWzap()])
+    : [null, null];
+
+  const saludWzap: Record<string, SaludDeLineaWzap> = {};
+  if (hayWzap) {
+    for (const linea of lineas.filter((l) => l.provider === 'wzap')) {
+      saludWzap[linea.id] = saludDeLineaWzap({
+        channelUuid: linea.channel_uuid,
+        devices,
+        webhooks,
+        nuestraRuta: '/api/webhooks/wzap',
+        secreto: process.env.WZAP_WEBHOOK_SECRET ?? null,
+      });
+    }
+  }
 
   return NextResponse.json({
     entorno: {
@@ -118,6 +146,31 @@ export async function GET() {
       prioridad: l.prioridad,
     })),
     config,
+    // La pregunta que ninguna otra parte del diagnóstico contestaba: **¿va a
+    // volver la respuesta?** En wzap el webhook se registra por device, así que
+    // una línea puede mandar perfecto y no recibir nada — y eso se lee en el
+    // informe del cliente como «no contestó». Ver saludDeLineaWzap().
+    wzap: hayWzap
+      ? {
+          // `null` = no se pudo preguntar (llave ausente o el proveedor no
+          // contestó). Se distingue de la lista vacía a propósito: «no sé» y
+          // «no hay ninguno» mandan a lugares distintos.
+          consultado: devices !== null && webhooks !== null,
+          devices,
+          // La misma llave ve las líneas de otros negocios de la cuenta, así que
+          // de los webhooks solo se listan los que apuntan acá. Los ajenos no
+          // son asunto nuestro y sus URLs tampoco.
+          webhooks_hacia_nosotros: (webhooks ?? [])
+            .filter((w) => w.url.includes('/api/webhooks/wzap'))
+            .map((w) => ({
+              nombre: w.nombre,
+              activo: w.activo,
+              device: w.deviceId,
+              eventos: w.eventos,
+            })),
+          lineas: saludWzap,
+        }
+      : null,
     ultimas_pruebas: ultimas ?? [],
     numeros_bloqueados: bloqueados ?? [],
   });
