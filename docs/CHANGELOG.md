@@ -8,6 +8,49 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.15.0] — 2026-08-29 · Reintentar con el mismo plan
+
+Volver a correr una prueba obligaba a reescribir el negocio, la apertura, el
+objetivo y las preguntas a mano, una por una. Ahora hay un botón en
+`/admin/pruebas/[pruebaId]`.
+
+### Agregado
+
+- **`aMedidaDelPlan()`** en `guion.ts` — el inverso de `planALaMedida()`. Un
+  plan es el contrato de una prueba y está guardado entero en
+  `smoke_probes.plan`, así que reintentar no recompila: **vuelve a mandar el
+  mismo contrato**. Recompilar contra el research daría otras preguntas y las dos
+  corridas dejarían de ser comparables, que es lo único que se quiere de un
+  reintento. Por eso el cuerpo va como `aMedida` aunque la prueba haya nacido de
+  un molde.
+- **El botón «Reintentar con el mismo plan»**, que no crea nada por su cuenta:
+  arma el cuerpo y lo manda a `POST /api/admin/pruebas`, que sigue siendo la
+  única forma de crear una prueba a mano (ADR 0027). Sin endpoint nuevo.
+- **`scripts/alias-hooks.mjs`** — resuelve el alias `@/` para que una prueba
+  suelta pueda importar el archivo real. Antes había que transpilar a mano, y
+  una copia prueba la copia.
+
+### Decisiones que se ven en la pantalla
+
+- **El botón solo aparece con la prueba terminada.** Dos conversaciones vivas de
+  la misma línea contra el mismo número son un hilo pisando al otro: la unidad de
+  ocupación es el par `(línea, número)`.
+- **No aparece si la línea se apagó o si el plan es viejo.** Un botón que existe
+  y falla es peor que uno que no existe.
+- **El reintento repite el mismo `organizationId`**, para que `compilarUnidad()`
+  vuelva a resolver la misma ficha y la misma rúbrica. Sin eso mediría atención
+  pero dejaría de medir exactitud.
+- **En modo guion el objetivo no se devuelve tal cual.** Lo redacta
+  `planALaMedida()` a partir de la cantidad de mensajes; devolverlo haría que al
+  segundo reintento dijera «las 4 preguntas» de una prueba de 3. Hay una prueba
+  de que reintentar un reintento no deriva.
+
+### Cómo desplegarlo
+
+Solo código, sin migración.
+
+---
+
 ## [3.14.0] — 2026-08-29 · El comprador aprende a elegir del menú
 
 La prueba `2699ffec` contra el bot de Americanino terminó **fallida** con diez

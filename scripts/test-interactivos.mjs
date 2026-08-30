@@ -22,6 +22,12 @@
 import { readFile } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { register } from 'node:module';
+
+// Node 24 ejecuta TypeScript directo, pero no conoce el alias `@/` de
+// tsconfig. Con esto se puede importar el archivo REAL en vez de una copia
+// transpilada a mano — una copia prueba la copia.
+register('./alias-hooks.mjs', import.meta.url);
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -383,6 +389,90 @@ check(
 check(
   'un cambio de emoji o espacio no los vuelve mensajes distintos',
   repiteLoMismo(['Por favor elige.', 'Por favor  elige!', 'Por favor elige'], 3),
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 4.8 · REINTENTAR — el viaje redondo del plan
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// El botón «Reintentar» arma su cuerpo con `aMedidaDelPlan()`, que es el inverso
+// de `planALaMedida()`. La invariante: redondear el viaje tiene que devolver un
+// plan equivalente. Si no, reintentar manda una prueba distinta de la que se
+// está reintentando — y las dos corridas dejan de ser comparables, que es lo
+// único que se quiere de un reintento.
+
+console.log('\n\x1b[1mReintentar: el viaje redondo del plan\x1b[0m');
+
+const { planALaMedida, aMedidaDelPlan } = await import(
+  pathToFileURL(join(raiz, 'lib', 'pruebas', 'guion.ts')).href
+);
+
+const entradaOriginal = {
+  modo: 'conversar',
+  negocio: 'Americanino',
+  producto: 'jeans para hombre',
+  apertura: 'Hola buenas tardes estoy buscando jeans para hombre',
+  objetivo: 'Que me den precio y disponibilidad de talla 30',
+  preguntas: ['¿Tienen talla 30 slim fit?', '¿Cuánto cuesta?', '¿Hacen envíos a Cali?'],
+  guion: [],
+  contexto: 'Marca de ropa, tiene tienda online.',
+  instrucciones: 'Directo y breve, como un comprador apurado.',
+  persona: { nombre: 'Camila Restrepo', ciudad: 'Cali' },
+  maxTurnos: 10,
+};
+
+const planOriginal = planALaMedida({ entrada: entradaOriginal, rubrica: [], ficha: [] });
+const reconstruida = aMedidaDelPlan(planOriginal);
+const planRedondo = planALaMedida({ entrada: reconstruida, rubrica: [], ficha: [] });
+
+check('el modo sobrevive', planRedondo.modo === planOriginal.modo);
+check('la apertura sobrevive EXACTA', planRedondo.apertura === planOriginal.apertura);
+check('el objetivo sobrevive', planRedondo.objetivo === planOriginal.objetivo);
+check(
+  'las tres preguntas sobreviven en orden',
+  JSON.stringify(planRedondo.sondas.map((x) => x.pregunta)) ===
+    JSON.stringify(planOriginal.sondas.map((x) => x.pregunta)),
+);
+check('el contexto sobrevive', planRedondo.contexto === planOriginal.contexto);
+check('las instrucciones sobreviven', planRedondo.instrucciones === planOriginal.instrucciones);
+check(
+  'la persona sobrevive completa',
+  JSON.stringify(planRedondo.persona) === JSON.stringify(planOriginal.persona),
+  'la identidad fija es lo que hace verificable la prueba en el CRM del cliente',
+);
+check('max_turnos sobrevive', planRedondo.max_turnos === planOriginal.max_turnos);
+
+// ── modo guion ──────────────────────────────────────────────────────────────
+
+const guionOriginal = planALaMedida({
+  entrada: {
+    ...entradaOriginal,
+    modo: 'guion',
+    guion: ['Hola, buenas', '¿Tienen talla 30?', '¿Cuánto cuesta?'],
+    preguntas: [],
+  },
+  rubrica: [],
+  ficha: [],
+});
+const guionRedondo = planALaMedida({ entrada: aMedidaDelPlan(guionOriginal), rubrica: [], ficha: [] });
+
+check(
+  'el guion sobrevive mensaje por mensaje',
+  JSON.stringify(guionRedondo.guion) === JSON.stringify(guionOriginal.guion),
+);
+check('la apertura del guion sigue siendo el mensaje 1', guionRedondo.apertura === 'Hola, buenas');
+check(
+  'el objetivo generado NO se acumula al reintentar',
+  guionRedondo.objetivo === guionOriginal.objetivo,
+  'devolverlo tal cual haría que al segundo reintento dijera «las 4 preguntas» de una prueba de 3',
+);
+
+// Un reintento del reintento tiene que seguir siendo el mismo plan.
+const terceraVuelta = planALaMedida({ entrada: aMedidaDelPlan(guionRedondo), rubrica: [], ficha: [] });
+check(
+  'reintentar un reintento no deriva',
+  terceraVuelta.objetivo === guionOriginal.objetivo &&
+    JSON.stringify(terceraVuelta.guion) === JSON.stringify(guionOriginal.guion),
 );
 
 // ═══════════════════════════════════════════════════════════════════════════

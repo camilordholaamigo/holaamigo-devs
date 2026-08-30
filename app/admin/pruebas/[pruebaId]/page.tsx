@@ -5,6 +5,7 @@ import { Card, Badge, SourceMark } from '@/components/ui';
 import { AccionesDePrueba } from '@/components/pruebas-admin';
 import { ConversacionEnVivo } from '@/components/conversacion-en-vivo';
 import { formatoDuracion } from '@/lib/pruebas/motor';
+import { aMedidaDelPlan } from '@/lib/pruebas/guion';
 import { cn } from '@/lib/utils';
 import { modoDelPlan, type PruebaRow } from '@/lib/pruebas/types';
 
@@ -58,6 +59,43 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
   const plan = p.plan;
   const viva = p.estado === 'running' || p.estado === 'pending';
 
+  // ── REINTENTAR ────────────────────────────────────────────────────────────
+  //
+  // El cuerpo se arma acá, en el servidor, porque acá está todo: el plan
+  // guardado, el objetivo con su organización y la línea desde la que salió.
+  //
+  // Es `aMedida` y no `plantillas` aunque la prueba haya nacido de un molde, y
+  // esa es la decisión del botón: reintentar vuelve a mandar el MISMO plan.
+  // Recompilar contra el research daría otras preguntas y las dos corridas
+  // dejarían de ser comparables, que es lo único que se quiere de un reintento.
+  //
+  // Va en null —y entonces no hay botón— si la línea está apagada o si el plan
+  // es de antes de que existiera esta forma. Un botón que existe y falla es peor
+  // que uno que no existe.
+  const lineaViva = p.smoke_channels !== null;
+  const reintento =
+    plan && lineaViva
+      ? {
+          nombre: `${plan.negocio || p.target_phone} · reintento`,
+          proposito: 'qa' as const,
+          numeros: [
+            {
+              telefono: p.target_phone,
+              nombre: p.smoke_targets?.nombre ?? null,
+              // La misma organización, para que `compilarUnidad()` vuelva a
+              // resolver la MISMA ficha y la misma rúbrica. Sin esto el
+              // reintento mide atención pero deja de medir exactitud.
+              organizationId: p.smoke_targets?.organization_id ?? null,
+            },
+          ],
+          canales: [p.channel_id],
+          aMedida: aMedidaDelPlan(plan),
+          maxConcurrentes: 1,
+          ritmoSegundos: 0,
+          notas: `Reintento de la prueba ${p.id}.`,
+        }
+      : null;
+
   return (
     <main className="mx-auto max-w-4xl space-y-10 px-6 py-10">
       <div className="space-y-4">
@@ -90,6 +128,7 @@ export default async function PruebaPage({ params }: PageProps<'/admin/pruebas/[
             pruebaId={p.id}
             viva={viva}
             yaEvaluada={Boolean(p.evaluacion)}
+            reintento={reintento}
           />
         </div>
 

@@ -1,4 +1,5 @@
 import { clamp } from '@/lib/utils';
+import { modoDelPlan } from '@/lib/pruebas/types';
 import type {
   CriterioRubrica,
   HechoDeReferencia,
@@ -237,6 +238,48 @@ export function planALaMedida(args: {
     // recortado». Una prueba escrita a mano no está degradada: está escrita a
     // mano, que es más deliberado que cualquier compilación.
     degradado: false,
+  };
+}
+
+/**
+ * El inverso de `planALaMedida()`: de un plan guardado, de vuelta al formulario.
+ *
+ * Es lo que hace posible el botón «Reintentar» sin volver a escribir nada. Un
+ * plan es el contrato de una prueba (ADR 0027) y está guardado entero en
+ * `smoke_probes.plan`, así que reintentar no es recompilar: es **volver a mandar
+ * el mismo contrato**. Recompilar contra el research daría otras preguntas, y
+ * entonces las dos corridas no serían comparables — que es justo lo único que se
+ * quiere de un reintento.
+ *
+ * Lo que NO viaja acá, y es a propósito: la ficha y la rúbrica. Las dos se
+ * derivan de la organización del objetivo, así que el llamador manda el mismo
+ * `organizationId` y `compilarUnidad()` las vuelve a resolver igual. Meterlas en
+ * la entrada las volvería un dato editable a mano, y una rúbrica escrita a mano
+ * deja de ser una medición.
+ *
+ * Redondear el viaje —`planALaMedida(aMedidaDelPlan(p))`— tiene que devolver un
+ * plan equivalente. Hay una prueba que lo verifica.
+ */
+export function aMedidaDelPlan(plan: PlanDePrueba): EntradaAMedida {
+  const modo = modoDelPlan(plan);
+  const guion = modo === 'guion' ? (plan.guion ?? []) : [];
+
+  return {
+    modo,
+    negocio: plan.negocio,
+    producto: plan.producto,
+    apertura: plan.apertura,
+    // En modo guion el objetivo lo redacta `planALaMedida` a partir de la
+    // cantidad de mensajes. Devolverlo tal cual haría que el texto generado
+    // volviera a entrar como si lo hubiera escrito una persona, y al segundo
+    // reintento diría «Mandar las 4 preguntas» de una prueba de 3.
+    objetivo: modo === 'guion' ? '' : plan.objetivo,
+    preguntas: modo === 'guion' ? [] : plan.sondas.map((s) => s.pregunta),
+    guion,
+    contexto: plan.contexto ?? null,
+    instrucciones: plan.instrucciones ?? null,
+    persona: plan.persona,
+    maxTurnos: plan.max_turnos,
   };
 }
 

@@ -518,6 +518,36 @@ informe agrupe por pregunta entre veinte negocios.
 
 ---
 
+### Reintentar una prueba
+
+```ts
+aMedidaDelPlan(plan: PlanDePrueba): EntradaAMedida
+```
+
+El inverso de `planALaMedida()`. Es lo que hace posible el botón **«Reintentar
+con el mismo plan»** de `/admin/pruebas/[pruebaId]` sin volver a escribir las
+preguntas.
+
+Reintentar **vuelve a mandar el mismo plan; no recompila**. Recompilar contra el
+research daría otras preguntas y las dos corridas dejarían de ser comparables,
+que es lo único que se quiere de un reintento. Por eso el cuerpo va como
+`aMedida` aunque la prueba haya nacido de un molde.
+
+El botón no crea nada por su cuenta: arma un cuerpo y lo manda a
+`POST /api/admin/pruebas`, que sigue siendo la única forma de crear una prueba a
+mano (ADR 0027).
+
+Lo que **no** viaja en la entrada son la ficha y la rúbrica: se derivan de la
+organización del objetivo, así que el cuerpo repite el mismo `organizationId` y
+`compilarUnidad()` las vuelve a resolver igual. Sin eso el reintento mediría
+atención pero dejaría de medir exactitud.
+
+El botón aparece **solo con la prueba terminada**: dos conversaciones vivas de la
+misma línea contra el mismo número son un hilo pisando al otro, y la unidad de
+ocupación es el par `(línea, número)`.
+
+---
+
 ## `comprador.ts`
 
 ```ts

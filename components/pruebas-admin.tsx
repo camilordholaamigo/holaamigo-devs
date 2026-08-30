@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { Badge, Card } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import type { CanalRow, ProveedorDeLinea } from '@/lib/pruebas/types';
+import type { EntradaAMedida } from '@/lib/pruebas/guion';
 
 /**
  * Las piezas con estado de /admin/pruebas.
@@ -304,14 +305,39 @@ function LineaEditable({
 // ACCIONES SOBRE UNA CONVERSACIÓN
 // ═══════════════════════════════════════════════════════════════════════════
 
+/**
+ * El cuerpo exacto que reintentar le manda a `POST /api/admin/pruebas`.
+ *
+ * Se arma en el servidor —la página de la prueba tiene el plan, el objetivo y la
+ * línea— y viaja armado. La alternativa era mandar el plan crudo y armarlo acá,
+ * y significaba meter `aMedidaDelPlan()` en el bundle del navegador para nada.
+ */
+export interface CuerpoDeReintento {
+  nombre: string;
+  proposito: 'qa' | 'prospeccion';
+  numeros: { telefono: string; nombre: string | null; organizationId: string | null }[];
+  canales: string[];
+  aMedida: EntradaAMedida;
+  maxConcurrentes: number;
+  ritmoSegundos: number;
+  notas: string;
+}
+
 export function AccionesDePrueba({
   pruebaId,
   viva,
   yaEvaluada,
+  reintento,
 }: {
   pruebaId: string;
   viva: boolean;
   yaEvaluada: boolean;
+  /**
+   * Lo necesario para volver a correr ESTA prueba. Null cuando falta algo —una
+   * línea que se apagó, un plan viejo sin forma— y entonces el botón no está.
+   * Un botón que existe y falla es peor que uno que no existe.
+   */
+  reintento: CuerpoDeReintento | null;
 }) {
   const router = useRouter();
   const [ocupado, setOcupado] = useState<string | null>(null);
@@ -339,8 +365,55 @@ export function AccionesDePrueba({
     }
   }
 
+  /**
+   * Reintentar es volver a mandar el MISMO plan, no recompilarlo.
+   *
+   * Pasa por `POST /api/admin/pruebas`, que es la única forma de crear una
+   * prueba a mano (ADR 0027) — un segundo camino de creación fue la mitad de la
+   * confusión que esa decisión vino a arreglar, y hay una prueba que verifica
+   * que no vuelva. Acá no hay endpoint nuevo: hay un cuerpo armado desde el plan
+   * guardado.
+   */
+  async function reintentar() {
+    if (!reintento) return;
+    setOcupado('reintentar');
+    setError(null);
+    try {
+      const res = await fetch('/api/admin/pruebas', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(reintento),
+      });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(json.error ?? 'No se pudo reintentar.');
+        return;
+      }
+      // A la conversación nueva, no de vuelta acá: si se quedara en esta
+      // pantalla, la de al lado ya estaría corriendo y nadie la vería.
+      router.push(json.destino);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Falló la petición.');
+    } finally {
+      setOcupado(null);
+    }
+  }
+
   return (
     <div className="flex flex-wrap items-center gap-2.5">
+      {/* Solo con la prueba terminada. Dos conversaciones vivas de la misma
+          línea contra el mismo número son un hilo pisando al otro: la unidad de
+          ocupación es el par (línea, número) y vale una sola a la vez. */}
+      {!viva && reintento ? (
+        <button
+          type="button"
+          onClick={reintentar}
+          disabled={ocupado !== null}
+          className="rounded-lg bg-ink px-3 py-1.5 text-[13px] font-medium text-paper transition hover:opacity-90 disabled:opacity-40"
+        >
+          {ocupado === 'reintentar' ? 'Lanzando…' : 'Reintentar con el mismo plan'}
+        </button>
+      ) : null}
       {viva ? (
         <button
           type="button"
