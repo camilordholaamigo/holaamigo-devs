@@ -26,11 +26,16 @@
  */
 
 import { PGlite } from '@electric-sql/pglite';
+import { register } from 'node:module';
 import { readFile, readdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Resuelve `@/` para poder importar el modulo REAL en vez de una copia.
+// Ver scripts/alias-hooks.mjs.
+register('./alias-hooks.mjs', import.meta.url);
 const carpeta = join(raiz, 'supabase', 'migrations');
 
 let failures = 0;
@@ -713,6 +718,96 @@ console.log('\n\x1b[1m8 · Las invariantes del código que trajo 0017\x1b[0m');
   check(
     'la lista de clientes sale de organizations, no de smoke_targets',
     /\.from\('organizations'\)/.test(pantalla),
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+console.log('\n\x1b[1m9 · saludDeLineaWzap(): ¿va a VOLVER la respuesta?\x1b[0m');
+{
+  // En wzap el webhook se registra POR DEVICE. Una cuenta puede tener la llave
+  // bien, el device bien y el mensaje saliendo perfecto, y no recibir una sola
+  // respuesta — porque el webhook que reenvía los entrantes está atado a OTRA
+  // línea de la misma cuenta. El mensaje sale, el negocio contesta, el evento
+  // se dispara hacia una URL ajena, la conversación se cuelga, el watchdog la
+  // cierra y el informe del cliente dice «no contestó».
+  //
+  // Eso no es un error: es una cifra falsa, y una acusación falsa contra el
+  // negocio de alguien. Es el peor modo de fallo de todo el subsistema y el
+  // único que no deja rastro en ningún log, así que se prueba.
+  //
+  // Los datos de abajo tienen la FORMA real de `GET /v1/devices` y
+  // `/v1/webhooks`: una cuenta compartida, con la línea de pruebas que siembra
+  // la migración 0018 y un webhook hacia una aplicación ajena.
+  const { saludDeLineaWzap } = await import('@/lib/pruebas/wzap');
+
+  const NUESTRO = '69e62a9b0b653ef3ef32e965';
+  const AJENO = '67eaa49004ab7e30a7283ae3';
+  const SECRETO = 'un-secreto-cualquiera';
+
+  const devices = [
+    { id: AJENO, phone: '+573136102235', alias: 'Otro negocio', status: 'operative', sesion: 'online' },
+    { id: NUESTRO, phone: '+573332420353', alias: 'La de pruebas', status: 'operative', sesion: 'online' },
+  ];
+  const webhooks = [
+    { id: 'a', nombre: 'ajeno', url: 'https://otra-app.example.com/hook', activo: true, deviceId: NUESTRO, eventos: ['message:in:new'] },
+    { id: 'b', nombre: 'nuestro', url: `https://holaamigo.example.com/api/webhooks/wzap?k=${SECRETO}`, activo: true, deviceId: NUESTRO, eventos: ['message:in:new'] },
+  ];
+  const base = { devices, webhooks, nuestraRuta: '/api/webhooks/wzap', secreto: SECRETO };
+
+  const nuestra = saludDeLineaWzap({ ...base, channelUuid: NUESTRO });
+  check(
+    'la línea bien configurada no levanta ninguna alarma',
+    nuestra.problemas.length === 0 && nuestra.recibeRespuestas === true,
+    nuestra.problemas.join(' · '),
+  );
+  check(
+    'y confirma que el secreto de la URL es el vigente',
+    nuestra.secretoEnLaUrlCoincide === true,
+  );
+
+  // EL CASO QUE JUSTIFICA TODO ESTO: manda perfecto y no recibe nada.
+  const otraLinea = saludDeLineaWzap({ ...base, channelUuid: AJENO });
+  check(
+    'una línea sin webhook propio avisa que va a decir «no contestó»',
+    otraLinea.recibeRespuestas === false &&
+      otraLinea.problemas.some((p) => p.includes('no contestó')),
+    otraLinea.problemas.join(' · '),
+  );
+
+  const inventado = saludDeLineaWzap({ ...base, channelUuid: 'f'.repeat(24) });
+  check(
+    'un device que no existe en la cuenta se dice antes de mandar nada',
+    inventado.device === null && inventado.problemas.some((p) => p.includes('no existe')),
+  );
+
+  const rotado = saludDeLineaWzap({ ...base, channelUuid: NUESTRO, secreto: 'otro' });
+  check(
+    'un secreto rotado sin actualizar el webhook avisa del 401',
+    rotado.secretoEnLaUrlCoincide === false && rotado.problemas.some((p) => p.includes('401')),
+  );
+
+  const caida = saludDeLineaWzap({
+    ...base,
+    channelUuid: NUESTRO,
+    devices: devices.map((d) => (d.id === NUESTRO ? { ...d, sesion: 'offline' } : d)),
+  });
+  check(
+    'una sesión caída manda a reconectar el QR',
+    caida.problemas.some((p) => p.includes('QR')),
+  );
+
+  // `null` es «no se pudo preguntar» y NO es «no hay ninguno». Sin esa
+  // distinción, una caída de wzap pintaría la pantalla de rojo diciendo que la
+  // configuración está mal — y mandaría a alguien a romper lo que funciona.
+  const aOscuras = saludDeLineaWzap({
+    ...base,
+    channelUuid: NUESTRO,
+    devices: null,
+    webhooks: null,
+  });
+  check(
+    'sin poder consultar al proveedor no inventa alarmas',
+    aOscuras.problemas.length === 0 && aOscuras.recibeRespuestas === false,
   );
 }
 
