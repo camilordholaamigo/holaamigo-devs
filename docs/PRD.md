@@ -69,6 +69,7 @@ recomendación que dispara una conversación humana).
 | 16 | Créditos con ledger inmutable | ✅ | `adr/0011` |
 | 17 | Feed del President y agentes configurables | ✅ | `wiki/13` |
 | 18 | Consola del cliente y observabilidad | ✅ | `wiki/14` |
+| 19 | GTM Radar → Smoke Tester, opcional y sin replicar PII | ✅ | `wiki/25` |
 
 ---
 

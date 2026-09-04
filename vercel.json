@@ -34,6 +34,10 @@
     {
       "path": "/api/cron/pruebas",
       "schedule": "30 11 * * *"
+    },
+    {
+      "path": "/api/cron/gtm-radar-smoke",
+      "schedule": "45 11 * * *"
     }
   ],
   "headers": [

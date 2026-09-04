@@ -8,6 +8,25 @@ entrada sin sus pasos de despliegue es una entrada incompleta.
 
 ---
 
+## [3.17.0] — 2026-09-03 · GTM Radar conecta el Smoke Tester
+
+### Agregado
+
+- Preflight y ejecución M2M con HMAC, idempotencia y kill switch.
+- Solicitudes, objetivos externos y outbox de callbacks durables en la
+  migración `0019_gtm_radar_smoke_integration.sql`.
+- Batería fija de tres pruebas para la marca primaria y una para competidores,
+  respetando bloqueo global y enfriamiento de 72 horas.
+- Callback agregado sin teléfonos ni transcripciones.
+
+### Para desplegar
+
+Ejecutar la migración `0019`, configurar `GTM_RADAR_MACHINE_HMAC_KEY` en ambos
+servicios, confirmar `CRON_SECRET` y desplegar primero con
+`GTM_RADAR_SMOKE_ENABLED=false`. Ver `wiki/25-integracion-gtm-radar.md`.
+
+---
+
 ## [3.16.0] — 2026-08-30 · «No autorizado» deja de ser un callejón
 
 Dos fallos que se ven igual —una pantalla que dice algo corto y no dice qué
