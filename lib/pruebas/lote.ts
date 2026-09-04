@@ -99,6 +99,9 @@ export interface ObjetivoDeLote {
   organizationId: string | null;
   telefono: string;
   nombre: string | null;
+  /** Evidencia pública que originó el número; usada por integraciones auditables. */
+  sourceUrl?: string | null;
+  confianza?: number | null;
 }
 
 /**
@@ -472,8 +475,8 @@ async function resolverObjetivos(
           nombre: o.nombre ?? previo?.nombre ?? null,
           phone_e164: e164,
           origen: previo?.origen ?? 'manual',
-          source_url: previo?.source_url ?? null,
-          confianza: previo?.confianza ?? 1,
+          source_url: o.sourceUrl ?? previo?.source_url ?? null,
+          confianza: o.confianza ?? previo?.confianza ?? 1,
         },
         { onConflict: 'phone_e164' },
       )

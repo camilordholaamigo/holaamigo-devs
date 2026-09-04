@@ -79,6 +79,13 @@ export const env = {
   get cronSecret() {
     return optional('CRON_SECRET');
   },
+  /** HMAC compartido exclusivamente con Audit-GTM; no reutilizar claves de manifests. */
+  get gtmRadarMachineHmacKey() {
+    return required('GTM_RADAR_MACHINE_HMAC_KEY');
+  },
+  get gtmRadarSmokeEnabled() {
+    return optional('GTM_RADAR_SMOKE_ENABLED', 'false') === 'true';
+  },
   get siteUrl() {
     const explicit = process.env.NEXT_PUBLIC_SITE_URL;
     if (explicit) return explicit.replace(/\/$/, '');
